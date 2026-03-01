@@ -1,0 +1,55 @@
+# macOS
+.DS_Store
+
+# Node.js
+node_modules/
+dist/
+.next/
+out/
+build/
+coverage/
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# Project Specific
+model_paths.json
+
+# ASR model/cache artifacts (local only)
+models/
+modelscope/
+.cache/
+**/.cache/
+funasr-runtime-resources/
+*.onnx
+*.pt
+*.pth
+*.bin
+
+# yt-dlp local download outputs (avoid huge media files in git)
+yt_dlp_webui/yt_dlp_webui/downloads/
+yt_dlp_webui/yt_dlp_webui/downloads/

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>yt-dlp Web UI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+    <h1>yt-dlp Web UI</h1>
+    <div class="container">
+        <div class="form-container">
+            <input type="text" id="video-url" placeholder="Enter video URL">
+            <button id="get-formats-btn">Get Formats</button>
+        </div>
+        
+        <div class="options-container">
+            <div class="option-item">
+                <label for="cookie-browser">Use Cookies From:</label>
+                <select id="cookie-browser">
+                    <option value="">None</option>
+                    <option value="chrome">Chrome</option>
+                    <option value="firefox">Firefox</option>
+                    <option value="safari">Safari</option>
+                    <option value="edge">Edge</option>
+                    <option value="opera">Opera</option>
+                    <option value="brave">Brave</option>
+                    <option value="vivaldi">Vivaldi</option>
+                </select>
+            </div>
+             <div class="option-item">
+                <input type="checkbox" id="impersonate-checkbox">
+                <label for="impersonate-checkbox">Bypass Anti-Bot Protection</label>
+            </div>
+        </div>
+
+        <div id="playlist-container" class="hidden">
+            <h2>Videos in Playlist</h2>
+            <ul id="playlist-videos"></ul>
+        </div>
+
+        <div id="formats-container" class="hidden">
+            <div class="format-section">
+                <h2>Video Formats</h2>
+                <p class="help-text">Note: Select a video format and yt-dlp will automatically download and merge the best available audio.</p>
+                <div class="video-options">
+                    <div class="option-item">
+                        <input type="checkbox" id="merge-audio-checkbox" checked>
+                        <label for="merge-audio-checkbox">Merge best audio</label>
+                    </div>
+                    <div class="option-item">
+                        <input type="checkbox" id="prefer-mp4-checkbox" checked>
+                        <label for="prefer-mp4-checkbox">Prefer MP4 format</label>
+                    </div>
+                </div>
+                <div id="video-formats-table"></div>
+            </div>
+            <div class="format-section">
+                <h2>Audio-only Formats</h2>
+                 <div class="option-item">
+                    <input type="checkbox" id="mp3-convert-checkbox">
+                    <label for="mp3-convert-checkbox">Convert to MP3</label>
+                </div>
+                <div id="audio-formats-table"></div>
+            </div>
+            <button id="download-btn">Download Selected Format</button>
+        </div>
+        
+        <h2>Download Progress</h2>
+        <pre id="progress"></pre>
+
+        <div class="file-list-header">
+            <h2>Downloaded Files</h2>
+            <div class="filter-buttons">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="video">Video</button>
+                <button class="filter-btn" data-filter="audio">Audio</button>
+            </div>
+        </div>
+        <div class="file-list-actions">
+            <input type="checkbox" id="select-all-checkbox">
+            <label for="select-all-checkbox">Select All</label>
+            <button id="batch-delete-btn">Delete Selected</button>
+        </div>
+        <ul id="file-list">
+        </ul>
+    </div>
+</body>
+</html>

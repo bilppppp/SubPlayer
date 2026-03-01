@@ -1,0 +1,61 @@
+/* ── SubPlayer Subtitle Overlay ────────────────────────────────────── */
+
+#subplayer-overlay {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647; /* Maximum z-index */
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  opacity: 0;
+}
+
+#subplayer-subtitle-text {
+  max-width: 80vw;
+  padding: 6px 16px;
+  border-radius: 8px;
+
+  background: rgba(0, 0, 0, 0.80);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Subtle border */
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+#subplayer-subtitle-translation {
+  max-width: 80vw;
+  padding: 4px 12px;
+  border-radius: 6px;
+
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+
+  color: #fbbf24; /* amber-400 */
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Empty state — hide when no content */
+#subplayer-subtitle-text:empty,
+#subplayer-subtitle-translation:empty {
+  display: none;
+}

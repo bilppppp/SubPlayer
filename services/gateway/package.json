@@ -1,0 +1,16 @@
+{
+  "name": "funasr-gateway",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.7",
+    "@google/generative-ai": "^0.24"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
