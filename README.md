@@ -278,9 +278,9 @@ YT_COOKIES_BROWSER=chrome       # 解决 YouTube 429 限制 (chrome/firefox/safa
 - **长字幕显示修复**
   - 修复 readable block 索引漂移导致的“高亮错位/卡段”问题。
   - 强化长段切分策略（按时长+字数动态切分），避免字幕长时间停在单段。
-- **Pornhub 播放与转写链路优化**
+- **XXrnhub 播放与转写链路优化**
   - Gateway `idleTimeout` 提高到 120s，降低 HLS 片段代理时 `socket hang up` 概率。
-  - `transcribe-url` 对 pornhub 站点跳过原生字幕探测，直接进入 ASR。
+  - `transcribe-url` 对 XXrnhub 站点跳过原生字幕探测，直接进入 ASR。
   - 原生字幕探测加入超时保护（12s），超时立即回退 ASR，减少“无字幕等待”。
 - **设置与体验**
   - 字幕/排版配置引入“应用字幕设置”按钮，修改后可立即生效。
