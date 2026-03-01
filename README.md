@@ -30,7 +30,8 @@
 │  Chrome 扩展      │ ──→  │       ↓              ↓           │
 │  (Side Panel)    │      │  ASR 路由          翻译路由       │
 └──────────────────┘      │  ├ YouTube字幕提取  ├ Gemini API  │
-                          │  ├ ffmpeg音频提取   └ DeepSeek API│
+                          │  ├ ffmpeg音频提取   ├ Qwen API    │
+                          │  │                  └ DeepSeek API│
                           │  ├ 本地 FunASR                    │
                           │  ├ 火山云 STT                     │
                           │  └ 阿里云 STT                     │
@@ -87,7 +88,9 @@ funasr/
     │       │   └── index.ts    #   工厂 + fallback 调度
     │       └── routes/
     │           ├── asr.ts      #   转写路由 (含 YouTube 字幕提取)
-    │           └── translate.ts#   翻译路由 (Gemini + DeepSeek 双引擎)
+    │           ├── translate.ts#   翻译路由 (Gemini / Qwen / DeepSeek)
+    │           ├── video.ts    #   视频代理与直链抓流接入
+    │           └── jobs.ts     #   预处理任务队列接口
     │
     └── asr/                    # 本地 ASR 微服务 (仅开发环境)
         ├── requirements.txt
@@ -116,7 +119,8 @@ make install
 #   cd apps/web && bun install
 
 # 2. 配置 .env
-# 编辑 .env，填入 GEMINI_API_KEY（必须）和 DEEPSEEK_API_KEY（可选备用）
+# 编辑 .env，填入 GEMINI_API_KEY（推荐）和 ALIYUN_DASHSCOPE_KEY（Qwen 备用）
+# DEEPSEEK_API_KEY 为可选手动切换
 # 默认 ASR_PROVIDER=local，需要本地 FunASR 服务
 
 # 3. (可选) 设置本地 ASR
@@ -189,8 +193,20 @@ pm2 startup   # 开机自启
 #      # 在 Vercel 导入项目
 #    方案 B: 同服务器部署
 #      cd apps/web && bun run build
-#      # 在 nginx.conf 中配置静态文件指向 apps/web/.next
+#      # 用 PM2 启动 Next 生产服务（不要直接把 .next 当静态目录）
+#      cd apps/web && pm2 start "bun run start -- -p 3000" --name subplayer-web
+#      # Nginx 将 / 反代到 127.0.0.1:3000，将 /api 反代到 127.0.0.1:8080
 ```
+
+### Docker 部署说明（当前状态）
+
+- 仓库当前**未内置官方 Dockerfile / docker-compose.yml**。
+- 因此 README 不能保证“直接 docker 一键可用”。
+- 如需 Docker 化，建议先补齐：
+  - `services/gateway/Dockerfile`
+  - `apps/web/Dockerfile`
+  - 根目录 `docker-compose.yml`
+  - `.env.production` 与健康检查脚本
 
 ## 配置说明
 
@@ -202,7 +218,7 @@ ASR_PROVIDER=local              # local | volcengine | aliyun
 # ASR_FALLBACK_CHAIN=volcengine,aliyun,local  # 可选 fallback 链
 
 # ── 翻译引擎 ────────────────────────────────────────
-TRANSLATE_PROVIDER=auto         # gemini | deepseek | auto (推荐)
+TRANSLATE_PROVIDER=auto         # auto | gemini | qwen | deepseek
 GEMINI_MODEL=gemini-2.0-flash   # 付费 key 推荐
 # GEMINI_MODEL=gemini-2.0-flash-lite        # 免费 key 推荐
 # GEMINI_MODEL=gemini-3-flash-preview       # 最新模型，上下文最大
@@ -231,12 +247,13 @@ YT_COOKIES_BROWSER=chrome       # 解决 YouTube 429 限制 (chrome/firefox/safa
 | Gemini | gemini-2.0-flash | 付费 key，速度快，适合长视频 |
 | Gemini | gemini-2.0-flash-lite | 免费 key，1000 RPD |
 | Gemini | gemini-3-flash-preview | 最新模型，大上下文窗口 |
-| DeepSeek | deepseek-chat | 备用引擎，Gemini 失败时自动切换 |
+| Qwen | qwen-max | auto 模式默认备用（依赖阿里云密钥） |
+| DeepSeek | deepseek-chat | 可手动切换使用 |
 
 翻译流程优化:
 - **批量翻译** — 每 50 段为一批，批次间 1.5s 间隔避免限流
 - **单批次重试** — 每批最多重试 3 次（3s, 6s 退避），失败不阻塞后续批次
-- **双引擎 fallback** — `auto` 模式下 Gemini 失败自动切换 DeepSeek
+- **双引擎 fallback** — `auto` 模式下 Gemini 失败自动切换 Qwen
 
 ## API 接口
 
@@ -278,12 +295,29 @@ YT_COOKIES_BROWSER=chrome       # 解决 YouTube 429 限制 (chrome/firefox/safa
 | 视频 | HTML5 `<video>`, YouTube IFrame API, 实时字幕叠加 |
 | 网关 | Bun, Hono, TypeScript |
 | ASR | FunASR (本地), 火山云 STT, 阿里云百炼, yt-dlp (YouTube 原生字幕) |
-| 翻译 | Gemini API (多模型), DeepSeek API, 自动 fallback |
+| 翻译 | Gemini / Qwen / DeepSeek（auto: Gemini → Qwen） |
 | 媒体 | ffmpeg (音频提取/分片), yt-dlp (视频下载/字幕提取) |
 | 部署 | 宝塔面板 + PM2 + Nginx (后端), Vercel (前端, 可选) |
 | 扩展 | Chrome Manifest V3, Side Panel API |
 
 ## 常见问题
+
+### README 是否“按步骤必定成功”？
+
+不是。当前 README 是“可执行参考”，但以下因素会影响成功率：
+
+1. 第三方站点策略变化（yt-dlp 可用性、Cloudflare、签名过期）
+2. 服务器网络与 DNS（尤其是访问 Google/YouTube/CDN）
+3. 系统依赖版本（Bun、ffmpeg、yt-dlp、Python）
+4. API 配额与密钥权限
+
+建议上线前按以下清单验收：
+
+1. `GET /api/health` 返回 200
+2. `GET /api/asr/capability` 返回 `canTranscribe=true` 或有可用云端
+3. `POST /api/video/prepare` 可返回 `streamUrl`
+4. `POST /api/asr/transcribe-url` 可返回 `segments`
+5. `POST /api/translate/batch` 可返回带 `translation` 的段落
 
 ### YouTube 链接报 403 / 429 错误
 
