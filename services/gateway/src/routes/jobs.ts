@@ -367,3 +367,35 @@ jobsRoutes.post("/status-batch", async (c) => {
 
   return c.json({ ok: true, statuses });
 });
+
+jobsRoutes.post("/clear", async (c) => {
+  const body = await c.req.json<{ scope?: "all" | "queue-only" }>().catch(() => ({} as { scope?: "all" | "queue-only" }));
+  const scope = body.scope || "all";
+
+  const removedJobs = jobsByKey.size;
+  const removedResults = resultsByKey.size;
+  const removedQueued = queue.length;
+
+  queue.splice(0, queue.length);
+
+  if (scope === "all") {
+    jobsByKey.clear();
+    resultsByKey.clear();
+  } else {
+    for (const [key, job] of jobsByKey) {
+      if (job.status === "queued") jobsByKey.delete(key);
+    }
+  }
+
+  return c.json({
+    ok: true,
+    scope,
+    removedJobs,
+    removedResults,
+    removedQueued,
+    running,
+    message: running > 0
+      ? "Cleared cache/queue. Running jobs may still finish and create new results."
+      : "Cleared cache/queue.",
+  });
+});

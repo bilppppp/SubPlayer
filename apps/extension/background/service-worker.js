@@ -194,29 +194,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "GET_BROWSER_SETTINGS_FROM_ACTIVE_TAB") {
+    const requestSettingsFromTab = (tabId, done) => {
+      chrome.tabs.sendMessage(tabId, { type: "EXPORT_SUBPLAYER_SETTINGS" }, (res) => {
+        if (chrome.runtime?.lastError) {
+          done({ ok: false, error: chrome.runtime.lastError.message || "sendMessage failed" });
+          return;
+        }
+        if (!res?.ok) {
+          done({ ok: false, error: res?.error || "No settings found in current tab" });
+          return;
+        }
+        done({ ok: true, settings: res.settings || {} });
+      });
+    };
+
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id;
       if (!tabId) {
         sendResponse({ ok: false, error: "No active tab" });
         return;
       }
-      chrome.tabs.sendMessage(tabId, { type: "EXPORT_SUBPLAYER_SETTINGS" }, (res) => {
-        if (chrome.runtime?.lastError) {
+
+      requestSettingsFromTab(tabId, (firstTry) => {
+        if (firstTry.ok) {
           sendResponse({
-            ok: false,
-            error: `sync runtime error: ${chrome.runtime.lastError.message}`,
+            ok: true,
+            settings: firstTry.settings || {},
+            source: "active-tab",
           });
           return;
         }
-        if (!res?.ok) {
-          sendResponse({ ok: false, error: res?.error || "No settings found in current tab" });
-          return;
-        }
-        sendResponse({
-          ok: true,
-          settings: res.settings || {},
-          source: "active-tab",
-        });
+
+        // After extension reload, existing tabs may not have content script yet.
+        // Inject once and retry.
+        chrome.scripting.executeScript(
+          { target: { tabId }, files: ["content/content.js"] },
+          () => {
+            if (chrome.runtime?.lastError) {
+              sendResponse({
+                ok: false,
+                error: `sync runtime error: ${firstTry.error}`,
+              });
+              return;
+            }
+
+            requestSettingsFromTab(tabId, (secondTry) => {
+              if (!secondTry.ok) {
+                sendResponse({
+                  ok: false,
+                  error: `sync runtime error: ${secondTry.error}`,
+                });
+                return;
+              }
+              sendResponse({
+                ok: true,
+                settings: secondTry.settings || {},
+                source: "active-tab",
+              });
+            });
+          },
+        );
       });
     });
     return true;

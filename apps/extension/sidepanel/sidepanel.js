@@ -174,6 +174,30 @@ function triggerDownload(filename, content, mime = "text/plain;charset=utf-8") {
   URL.revokeObjectURL(url);
 }
 
+async function clearAllRemoteJobs() {
+  if (!apiBase) return { ok: false, error: "missing api base" };
+  try {
+    const res = await fetch(`${apiBase}/api/jobs/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "all" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      if (res.status === 404) {
+        return {
+          ok: false,
+          error: "gateway-not-updated-404",
+        };
+      }
+      return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
 async function fetchJobResult(item) {
   const targetLang = item.targetLang || "auto";
   const url = `${apiBase}/api/jobs/result?url=${encodeURIComponent(item.url)}&targetLang=${encodeURIComponent(targetLang)}`;
@@ -229,11 +253,27 @@ function effectiveApiKeys() {
   return browserSettings?.apiKeys || {};
 }
 
-function hasCloudAsrConfigured() {
+function currentAsrProvider() {
   const k = effectiveApiKeys();
+  return String(k.asrProvider || "auto");
+}
+
+function currentAsrLabel() {
+  const p = currentAsrProvider();
+  if (p === "local") return "本地 FunASR";
+  if (p === "volcengine") return "火山引擎";
+  if (p === "aliyun") return "阿里云";
+  return "自动 (auto)";
+}
+
+function hasUsableAsrConfig() {
+  const k = effectiveApiKeys();
+  const provider = currentAsrProvider();
+  if (provider === "local") return true;
+  if (provider === "auto") return true;
   return Boolean(
-    (k.asrProvider === "volcengine" && k.volcengineAppId && k.volcengineToken)
-    || (k.asrProvider === "aliyun" && k.aliyunKey),
+    (provider === "volcengine" && k.volcengineAppId && k.volcengineToken)
+    || (provider === "aliyun" && k.aliyunKey),
   );
 }
 
@@ -477,7 +517,7 @@ async function loadState() {
 
   renderTodoList();
   updatePreprocessSummary();
-  setStatus("active", browserSettings ? "就绪（已同步浏览器设置）" : "就绪（未同步浏览器设置）");
+  setStatus("active", browserSettings ? `就绪（ASR: ${currentAsrLabel()}）` : "就绪（未同步浏览器设置）");
 }
 
 async function syncBrowserSettings() {
@@ -511,7 +551,7 @@ async function syncBrowserSettings() {
   };
   await writeToStorage({ [BROWSER_SETTINGS_KEY]: browserSettings });
 
-  setStatus("active", `已同步浏览器设置（ASR: ${apiKeys.asrProvider || "auto"}）`);
+  setStatus("active", `已同步浏览器设置（ASR: ${currentAsrLabel()}）`);
 }
 
 saveApiBtn.addEventListener("click", () => {
@@ -561,8 +601,12 @@ preprocessAllBtn?.addEventListener("click", async () => {
     setStatus("error", "列表为空，请先保存链接");
     return;
   }
-  if (!hasCloudAsrConfigured()) {
-    setStatus("error", "请先点“同步浏览器设置”，确保使用云端 ASR 配置");
+  if (!browserSettings) {
+    setStatus("error", "请先点“同步浏览器设置”后再处理视频列表");
+    return;
+  }
+  if (!hasUsableAsrConfig()) {
+    setStatus("error", "当前 ASR 配置不完整，请检查浏览器设置后重试");
     return;
   }
 
@@ -572,6 +616,7 @@ preprocessAllBtn?.addEventListener("click", async () => {
   let firstError = "";
 
   setStatus("active", "正在提交预处理任务...");
+  setSummary(`当前预处理 ASR：${currentAsrLabel()}`, "active");
   // Refresh latest job state first, then only enqueue truly new/unprocessed items.
   await pollJobStatuses();
   for (const item of todoItems) {
@@ -647,12 +692,31 @@ saveCurrentBtn.addEventListener("click", async () => {
 });
 
 clearBtn.addEventListener("click", async () => {
+  const confirmed = window.confirm("将清空：\n1) 插件列表\n2) 网关预处理任务与缓存结果\n\n是否继续？");
+  if (!confirmed) return;
+
+  let remoteMsg = "";
+  if (apiBase) {
+    const remote = await clearAllRemoteJobs();
+    if (!remote.ok) {
+      if (remote.error === "gateway-not-updated-404") {
+        setStatus("error", "网关未更新（/api/jobs/clear 不存在）。已仅清空插件列表，请先重启/部署 Gateway");
+      } else {
+        setStatus("error", `清空失败：${remote.error}`);
+      }
+      // Fall through and still clear local list.
+    } else {
+      const d = remote.data || {};
+      remoteMsg = `（远端已清理 jobs=${d.removedJobs ?? 0}, results=${d.removedResults ?? 0}）`;
+    }
+  }
+
   todoItems = [];
   jobByItemId.clear();
   await writeToStorage({ [TODO_KEY]: [] });
   renderTodoList();
   updatePreprocessSummary();
-  setStatus("active", "已清空记录");
+  setStatus("active", `已清空全部记录${remoteMsg}`);
 });
 
 todoList.addEventListener("change", async (event) => {
