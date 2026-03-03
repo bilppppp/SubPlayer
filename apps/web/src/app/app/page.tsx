@@ -19,7 +19,7 @@ import { SubtitlePanel } from "@/components/SubtitlePanel";
 import { TaskProgress } from "@/components/TaskProgress";
 import { ExportDialog } from "@/components/ExportDialog";
 import { useSubtitleSync } from "@/hooks/use-subtitle-sync";
-import { getPreprocessResult, transcribeFile, transcribeUrl, translateSegments, prepareVideo, prepareVideoDirect } from "@/lib/api";
+import { getPreprocessResult, transcribeFile, transcribeUrl, transcribeUrlLive, translateSegments, prepareVideo, prepareVideoDirect } from "@/lib/api";
 import { generateReadableBlocks, type ResegmentOptions } from "@/lib/resegment";
 import { useSettings } from "@/store/settings";
 import type { MediaInput, Segment, ReadableBlock, SubtitleMode, TaskState } from "@/types";
@@ -260,6 +260,9 @@ export default function AppPage() {
   const [lastCompletedRunMode, setLastCompletedRunMode] = useState<"manual" | "auto" | null>(null);
 
   const {
+    asrProvider,
+    volcengineMode,
+    allowAsrAutoDowngrade,
     useReadableBlocks,
     blockMaxCharsZh,
     blockMaxCharsEn,
@@ -620,6 +623,7 @@ export default function AppPage() {
         let newSegments: Segment[] = [];
         let detectedLang = ""; // language detected by ASR
         let resumeTranslateIndex = 0;
+        let liveTranslatedUntil = 0;
 
         // ── Preprocess cache shortcut (queue result) ────────────
         if (input.type === "url" && inputUrl && !checkpoint) {
@@ -708,16 +712,161 @@ export default function AppPage() {
             progress: 30,
             message: "正在获取字幕 / 下载音频...",
           });
-          const result = await transcribeUrl(
-            input.url!,
-            language,
-            "multilingual",
-            capturedForAsr ?? undefined,
-            nextSignal(),
-          );
-          if (!result.ok) throw new Error(result.error ?? "转写失败");
-          newSegments = splitOversizedSegments(result.segments);
-          detectedLang = result.language ?? "";
+          const useLiveVolcengine =
+            asrProvider === "volcengine" && volcengineMode !== "legacy_auc" && volcengineMode !== "flash";
+
+          if (useLiveVolcengine) {
+            const liveRaw: Segment[] = [];
+            const liveTranslations: string[] = [];
+            let nextTranslate = 0;
+            const translateChunk = async (force = false) => {
+              const pending = liveRaw.length - nextTranslate;
+              if (pending <= 0) return;
+              if (!force && pending < 8) return;
+              const chunkSize = Math.min(10, pending);
+              const sourceLang =
+                detectedLang && detectedLang !== "auto"
+                  ? detectedLang
+                  : language === "auto"
+                    ? "en"
+                    : language;
+              const target = targetLangPreference && targetLangPreference !== "auto"
+                ? targetLangPreference
+                : (sourceLang === "zh" ? "en" : "zh");
+              setTargetLang(target);
+              setTask({
+                phase: "translating",
+                progress: Math.round((nextTranslate / Math.max(1, liveRaw.length)) * 100),
+                message: `流式翻译 ${Math.min(nextTranslate + chunkSize, liveRaw.length)}/${liveRaw.length}...`,
+              });
+              const trans = await translateSegments(
+                liveRaw.slice(nextTranslate, nextTranslate + chunkSize),
+                sourceLang,
+                target,
+                nextSignal(),
+              );
+              if (trans.ok && trans.segments.length > 0) {
+                for (let j = 0; j < trans.segments.length; j += 1) {
+                  liveTranslations[nextTranslate + j] = trans.segments[j].translation || "";
+                }
+              }
+              nextTranslate += chunkSize;
+              liveTranslatedUntil = Math.max(liveTranslatedUntil, nextTranslate);
+              setRawTimelineSegments([...liveRaw]);
+              setTranslatedTexts(Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""));
+            };
+
+            try {
+              const result = await transcribeUrlLive(
+                input.url!,
+                language,
+                "multilingual",
+                capturedForAsr ?? undefined,
+                {
+                  onPartial: async (payload) => {
+                    await waitIfPaused();
+                    const normalized = splitOversizedSegments(payload.segments).map((s) => ({
+                      start: s.start,
+                      end: s.end,
+                      text: s.text,
+                    }));
+                    liveRaw.splice(0, liveRaw.length, ...normalized);
+                    detectedLang = payload.language ?? detectedLang ?? language;
+                    setTask({
+                      phase: "transcribing",
+                      progress: 60,
+                      message: `流式识别中 — ${liveRaw.length} 段`,
+                    });
+                    setRawTimelineSegments([...liveRaw]);
+                    setTranslatedTexts(Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""));
+                    await translateChunk(false);
+                  },
+                  onDone: async (payload) => {
+                    const normalized = splitOversizedSegments(payload.segments).map((s) => ({
+                      start: s.start,
+                      end: s.end,
+                      text: s.text,
+                    }));
+                    liveRaw.splice(0, liveRaw.length, ...normalized);
+                    detectedLang = payload.language ?? detectedLang ?? language;
+                    await translateChunk(true);
+                  },
+                },
+                undefined,
+                nextSignal(),
+              );
+              if (!result.ok) throw new Error(result.error ?? "转写失败");
+              newSegments = composeAlignedSegments(
+                [...liveRaw],
+                Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""),
+              );
+            } catch (liveErr) {
+              console.warn("[ASR] live volcengine interrupted, fallback to classic transcribe-url", liveErr);
+              const liveDuration =
+                liveRaw.length > 0
+                  ? Math.max(0, (liveRaw[liveRaw.length - 1]?.end ?? 0) - (liveRaw[0]?.start ?? 0))
+                  : 0;
+              const liveLooksUsable = liveRaw.length >= 40 || liveDuration >= 90;
+              if (liveLooksUsable) {
+                setTask({
+                  phase: "translating",
+                  progress: 92,
+                  message: "流式中断，已使用已识别内容继续处理",
+                });
+                newSegments = composeAlignedSegments(
+                  [...liveRaw],
+                  Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""),
+                );
+              } else {
+              setTask({
+                phase: "downloading",
+                progress: 45,
+                message: "流式中断，自动切换到完整转写...",
+              });
+              const fallbackApiKeys = allowAsrAutoDowngrade
+                ? { asrProvider: "volcengine", volcengineMode: "flash" as const }
+                : { asrProvider: "volcengine", volcengineMode };
+              const fallback = await transcribeUrl(
+                input.url!,
+                language,
+                "multilingual",
+                capturedForAsr ?? undefined,
+                fallbackApiKeys,
+                nextSignal(),
+              );
+              if (fallback.ok) {
+                newSegments = splitOversizedSegments(fallback.segments);
+                detectedLang = fallback.language ?? detectedLang ?? "";
+                liveTranslatedUntil = 0;
+              } else if (liveRaw.length > 0) {
+                // Keep partial live results instead of failing hard.
+                setTask({
+                  phase: "translating",
+                  progress: 90,
+                  message: "流式中断且完整转写失败，已保留已识别字幕",
+                });
+                newSegments = composeAlignedSegments(
+                  [...liveRaw],
+                  Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""),
+                );
+              } else {
+                throw new Error(fallback.error ?? "转写失败");
+              }
+              }
+            }
+          } else {
+            const result = await transcribeUrl(
+              input.url!,
+              language,
+              "multilingual",
+              capturedForAsr ?? undefined,
+              undefined,
+              nextSignal(),
+            );
+            if (!result.ok) throw new Error(result.error ?? "转写失败");
+            newSegments = splitOversizedSegments(result.segments);
+            detectedLang = result.language ?? "";
+          }
         }
 
         setTracksFromAligned(newSegments);
@@ -762,7 +911,10 @@ export default function AppPage() {
             const CHUNK = 10;
             const merged = [...newSegments];
             let translated = merged.filter((s) => !!s.translation).length;
-            const startAt = Math.max(0, Math.min(resumeTranslateIndex, newSegments.length));
+            const startAt = Math.max(
+              0,
+              Math.min(Math.max(resumeTranslateIndex, liveTranslatedUntil), newSegments.length),
+            );
 
             for (let i = startAt; i < newSegments.length; i += CHUNK) {
               await waitIfPaused();
@@ -833,7 +985,7 @@ export default function AppPage() {
         }
       }
     },
-    [clearCheckpoint, playlistUrls, readCheckpoint, setTracksFromAligned, writeCheckpoint],
+    [asrProvider, clearCheckpoint, playlistUrls, readCheckpoint, setTracksFromAligned, volcengineMode, writeCheckpoint],
   );
 
   const retryWithSelectedCapture = useCallback(() => {

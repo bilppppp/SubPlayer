@@ -38,6 +38,10 @@ export const config = {
   // ── ASR — Volcengine (火山云) ──────────────────────────────────
   volcengineAppId: process.env.VOLCENGINE_APP_ID ?? "",
   volcengineAccessToken: process.env.VOLCENGINE_ACCESS_TOKEN ?? "",
+  volcengineSecretKey: process.env.VOLCENGINE_SECRET_KEY ?? "",
+  volcengineResourceId: process.env.VOLCENGINE_RESOURCE_ID ?? "volc.seedasr.sauc.duration",
+  /** bigmodel_nostream | bigmodel | bigmodel_async | flash | legacy_auc */
+  volcengineMode: process.env.VOLCENGINE_MODE ?? "bigmodel_nostream",
   volcengineCluster: process.env.VOLCENGINE_CLUSTER ?? "volcengine_streaming_common",
 
   // ── ASR — Aliyun (阿里云百炼 DashScope) ────────────────────────

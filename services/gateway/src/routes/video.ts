@@ -72,6 +72,17 @@ function cacheKey(input: string): string {
   return hasher.digest("hex").slice(0, 16);
 }
 
+export function getCachedVideoByOriginUrl(originUrl: string): CachedVideo | null {
+  const key = cacheKey(originUrl);
+  const cached = videoCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > CACHE_TTL_MS) {
+    return null;
+  }
+  if (!existsSync(cached.filePath)) return null;
+  return cached;
+}
+
 function createProxyToken(url: string): string {
   return `p_${cacheKey(`${url}:${Date.now()}:${Math.random()}`)}`;
 }

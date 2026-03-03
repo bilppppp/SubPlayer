@@ -16,8 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSettings, type HighlightStyle } from "@/store/settings";
-import { getAsrCapability } from "@/lib/api";
-import type { AsrCapabilityResponse } from "@/types";
+import { getAsrCapability, probeVolcengine } from "@/lib/api";
+import type { AsrCapabilityResponse, VolcengineProbeResponse } from "@/types";
 
 const FONT_OPTIONS = [
     { label: "系统默认 (Sans-serif)", value: "sans-serif" },
@@ -36,8 +36,11 @@ export function SettingsDialog() {
     const settings = useSettings();
     const [open, setOpen] = useState(false);
     const [activeCredTab, setActiveCredTab] = useState("volcengine");
+    const [showCredForm, setShowCredForm] = useState(false);
     const [checkingCapability, setCheckingCapability] = useState(false);
     const [capability, setCapability] = useState<AsrCapabilityResponse | null>(null);
+    const [probingVolc, setProbingVolc] = useState(false);
+    const [volcProbe, setVolcProbe] = useState<VolcengineProbeResponse | null>(null);
     const [appearanceDraft, setAppearanceDraft] = useState({
         panelFontFamily: settings.panelFontFamily,
         panelFontSize: settings.panelFontSize,
@@ -90,6 +93,16 @@ export function SettingsDialog() {
         }
     };
 
+    const handleProbeVolc = async () => {
+        setProbingVolc(true);
+        try {
+            const result = await probeVolcengine();
+            setVolcProbe(result);
+        } finally {
+            setProbingVolc(false);
+        }
+    };
+
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
@@ -106,8 +119,9 @@ export function SettingsDialog() {
                 </DialogHeader>
 
                 <Tabs defaultValue="api" className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
+                    <TabsList className="grid w-full grid-cols-4">
                         <TabsTrigger value="api">API 密钥</TabsTrigger>
+                        <TabsTrigger value="diag">诊断</TabsTrigger>
                         <TabsTrigger value="appearance">外观样式</TabsTrigger>
                         <TabsTrigger value="readable">阅读排版</TabsTrigger>
                     </TabsList>
@@ -130,7 +144,20 @@ export function SettingsDialog() {
                                 </SelectContent>
                             </Select>
 
-                            {activeCredTab === "volcengine" && (
+                            <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+                                <p className="text-xs text-muted-foreground">
+                                    服务商凭据表单默认折叠，按需展开
+                                </p>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setShowCredForm((v) => !v)}
+                                >
+                                    {showCredForm ? "收起配置" : "展开配置"}
+                                </Button>
+                            </div>
+
+                            {showCredForm && activeCredTab === "volcengine" && (
                                 <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
                                     <div className="space-y-2">
                                         <Label>App ID</Label>
@@ -152,11 +179,49 @@ export function SettingsDialog() {
                                             className="bg-background"
                                         />
                                     </div>
+                                    <div className="space-y-2">
+                                        <Label>Secret Key (可选)</Label>
+                                        <Input
+                                            type="password"
+                                            value={settings.volcengineSecretKey}
+                                            onChange={(e) => settings.setApiKeys({ volcengineSecretKey: e.target.value })}
+                                            placeholder="可选，不填也可用"
+                                            className="bg-background"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label>Resource ID</Label>
+                                        <Input
+                                            type="text"
+                                            value={settings.volcengineMode === "flash" ? "volc.bigasr.auc_turbo" : "volc.seedasr.sauc.duration"}
+                                            readOnly
+                                            className="bg-background"
+                                        />
+                                        <p className="text-[11px] text-muted-foreground">
+                                            按模式固定：nostream=`volc.seedasr.sauc.duration`，flash=`volc.bigasr.auc_turbo`
+                                        </p>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label>接入模式</Label>
+                                        <Select
+                                            value={settings.volcengineMode}
+                                            onValueChange={(val: "bigmodel_nostream" | "flash" | "legacy_auc") => settings.setApiKeys({ volcengineMode: val })}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="bigmodel_nostream">豆包 nostream</SelectItem>
+                                                <SelectItem value="flash">录音极速版 Flash（推荐）</SelectItem>
+                                                <SelectItem value="legacy_auc">旧版 AUC (回退)</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                     <p className="text-xs text-muted-foreground">用于高精度的语音识别 (ASR)。</p>
                                 </div>
                             )}
 
-                            {activeCredTab === "aliyun" && (
+                            {showCredForm && activeCredTab === "aliyun" && (
                                 <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
                                     <div className="space-y-2">
                                         <Label>API Key</Label>
@@ -172,7 +237,7 @@ export function SettingsDialog() {
                                 </div>
                             )}
 
-                            {activeCredTab === "gemini" && (
+                            {showCredForm && activeCredTab === "gemini" && (
                                 <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
                                     <div className="space-y-2">
                                         <Label>API Key</Label>
@@ -188,7 +253,7 @@ export function SettingsDialog() {
                                 </div>
                             )}
 
-                            {activeCredTab === "deepseek" && (
+                            {showCredForm && activeCredTab === "deepseek" && (
                                 <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
                                     <div className="space-y-2">
                                         <Label>API Key</Label>
@@ -226,6 +291,21 @@ export function SettingsDialog() {
                                 </Select>
                             </div>
 
+                            <div className="flex items-center justify-between rounded-xl border bg-card p-3">
+                                <div>
+                                    <p className="text-sm font-medium">允许 ASR 自动降级</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        关闭后将严格使用当前选择的接入模式，不自动切到 Flash 或其它模式。
+                                    </p>
+                                </div>
+                                <input
+                                    type="checkbox"
+                                    checked={settings.allowAsrAutoDowngrade}
+                                    onChange={(e) => settings.setApiKeys({ allowAsrAutoDowngrade: e.target.checked })}
+                                    className="rounded border-border bg-background"
+                                />
+                            </div>
+
                             <div className="space-y-2">
                                 <Label>文本翻译 (Translation) 服务商</Label>
                                 <Select
@@ -244,42 +324,74 @@ export function SettingsDialog() {
                                 </Select>
                             </div>
 
-                            <div className="space-y-2 rounded-xl border bg-card p-3">
-                                <div className="flex items-center justify-between">
-                                    <Label>ASR 环境检测</Label>
-                                    <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        onClick={handleDetectCapability}
-                                        disabled={checkingCapability}
-                                    >
-                                        {checkingCapability ? (
-                                            <>
-                                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                                检测中
-                                            </>
-                                        ) : (
-                                            "主动检测"
-                                        )}
-                                    </Button>
-                                </div>
-                                {!capability && (
-                                    <p className="text-xs text-muted-foreground">
-                                        点击“主动检测”查看当前机器是否可跑本地 ASR，以及是否可自动降级到云端。
-                                    </p>
-                                )}
-                                {capability && (
-                                    <div className="space-y-1 text-xs text-muted-foreground">
-                                        <p>可转写: {capability.capability?.canTranscribe ? "是" : "否"}</p>
-                                        <p>本地可用: {capability.capability?.localReady ? "是" : "否"}（{capability.capability?.localReason || "-"}）</p>
-                                        <p>本地模型: {capability.capability?.localModelsLoaded ? "已加载" : "未加载"}</p>
-                                        <p>系统依赖: ffmpeg {capability.capability?.ffmpegReady ? "OK" : "NO"} / ffprobe {capability.capability?.ffprobeReady ? "OK" : "NO"} / yt-dlp {capability.capability?.ytDlpReady ? "OK" : "NO"}</p>
-                                        <p>云端可用: Volcengine {capability.capability?.cloudAvailable?.volcengine ? "OK" : "NO"} / Aliyun {capability.capability?.cloudAvailable?.aliyun ? "OK" : "NO"}</p>
-                                        <p>推荐提供商: {capability.capability?.recommendedProvider || "none"}</p>
-                                        <p>自动顺序: {(capability.provider_order_auto || []).join(" -> ") || "-"}</p>
-                                    </div>
-                                )}
+                        </div>
+                    </TabsContent>
+
+                    <TabsContent value="diag" className="space-y-4 py-4">
+                        <div className="space-y-2 rounded-xl border bg-card p-3">
+                            <div className="flex items-center justify-between">
+                                <Label>环境检测</Label>
+                                <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={handleDetectCapability}
+                                    disabled={checkingCapability}
+                                >
+                                    {checkingCapability ? (
+                                        <>
+                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                            检测中
+                                        </>
+                                    ) : (
+                                        "检测"
+                                    )}
+                                </Button>
                             </div>
+                            {capability && (
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                    <p>可转写: {capability.capability?.canTranscribe ? "是" : "否"}</p>
+                                    <p>本地: {capability.capability?.localReady ? "可用" : "不可用"}（{capability.capability?.localReason || "-"}）</p>
+                                    <p>依赖: ffmpeg {capability.capability?.ffmpegReady ? "OK" : "NO"} / ffprobe {capability.capability?.ffprobeReady ? "OK" : "NO"} / yt-dlp {capability.capability?.ytDlpReady ? "OK" : "NO"}</p>
+                                    <p>云端: Volc {capability.capability?.cloudAvailable?.volcengine ? "OK" : "NO"} / Aliyun {capability.capability?.cloudAvailable?.aliyun ? "OK" : "NO"}</p>
+                                    <p>推荐: {capability.capability?.recommendedProvider || "none"} / 顺序: {(capability.provider_order_auto || []).join(" -> ") || "-"}</p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="space-y-2 rounded-xl border bg-card p-3">
+                            <div className="flex items-center justify-between">
+                                <Label>火山连通性探测</Label>
+                                <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={handleProbeVolc}
+                                    disabled={probingVolc}
+                                >
+                                    {probingVolc ? (
+                                        <>
+                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                            探测中
+                                        </>
+                                    ) : (
+                                        "探测"
+                                    )}
+                                </Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                只做 WS 握手+最小请求，不跑完整转写。用于快速确认 AppID/Token/ResourceID 是否有效。
+                            </p>
+                            {volcProbe && (
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                    <p>状态: {volcProbe.ok ? "成功" : "失败"} / 模式: {volcProbe.mode || "-"}</p>
+                                    <p>资源: {volcProbe.chosenResourceId || "-"}</p>
+                                    <p>信息: {volcProbe.message || volcProbe.error || "-"}</p>
+                                    {(volcProbe.attempts || []).map((a, idx) => (
+                                        <p key={`${a.resourceId}-${idx}`}>
+                                            - {a.resourceId}: {a.ok ? `OK${a.logid ? ` (logid=${a.logid})` : ""}` : `FAIL (${a.error || "unknown"})`}
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </TabsContent>
 

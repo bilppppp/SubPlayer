@@ -7,11 +7,15 @@ export interface SettingsState {
     // APIs
     volcengineAppId: string;
     volcengineToken: string;
+    volcengineSecretKey: string;
+    volcengineResourceId: string;
+    volcengineMode: "bigmodel_nostream" | "bigmodel" | "bigmodel_async" | "flash" | "legacy_auc";
     aliyunKey: string;
     geminiKey: string;
     deepseekKey: string;
     translateProvider: "auto" | "gemini" | "deepseek" | "qwen";
     asrProvider: "auto" | "volcengine" | "aliyun" | "local";
+    allowAsrAutoDowngrade: boolean;
 
     // UI - Subtitle Panel
     panelFontFamily: string;
@@ -32,7 +36,7 @@ export interface SettingsState {
     blockTolerance: number;
 
     // Actions
-    setApiKeys: (keys: Partial<Pick<SettingsState, "volcengineAppId" | "volcengineToken" | "aliyunKey" | "geminiKey" | "deepseekKey" | "translateProvider" | "asrProvider">>) => void;
+    setApiKeys: (keys: Partial<Pick<SettingsState, "volcengineAppId" | "volcengineToken" | "volcengineSecretKey" | "volcengineResourceId" | "volcengineMode" | "aliyunKey" | "geminiKey" | "deepseekKey" | "translateProvider" | "asrProvider" | "allowAsrAutoDowngrade">>) => void;
     setAppearance: (appearance: Partial<Pick<SettingsState, "panelFontFamily" | "panelFontSize" | "highlightStyle" | "playerFontFamily" | "playerFontSize">>) => void;
     setBlockSettings: (configs: Partial<Pick<SettingsState, "useReadableBlocks" | "blockMaxCharsZh" | "blockMaxCharsEn" | "blockMaxLines" | "blockMaxDuration" | "blockMinDuration" | "blockTolerance">>) => void;
     resetSettings: () => void;
@@ -41,11 +45,15 @@ export interface SettingsState {
 const initialState = {
     volcengineAppId: "",
     volcengineToken: "",
+    volcengineSecretKey: "",
+    volcengineResourceId: "volc.seedasr.sauc.duration",
+    volcengineMode: "flash" as const,
     aliyunKey: "",
     geminiKey: "",
     deepseekKey: "",
     translateProvider: "auto" as const,
     asrProvider: "auto" as const,
+    allowAsrAutoDowngrade: false,
 
     panelFontFamily: "sans-serif",
     panelFontSize: "14px",

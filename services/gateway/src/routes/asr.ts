@@ -7,6 +7,13 @@ import {
   listProviders,
   type Segment,
 } from "../providers/index.js";
+import {
+  FIXED_VOLCENGINE_RESOURCE_FLASH,
+  FIXED_VOLCENGINE_RESOURCE_SAUC,
+  probeVolcengineWs,
+  transcribeVolcengineLive,
+} from "../providers/volcengine.js";
+import { getCachedVideoByOriginUrl } from "./video.js";
 import { spawn } from "child_process";
 import { mkdtemp, unlink, readdir, readFile, rm, stat } from "fs/promises";
 import { tmpdir } from "os";
@@ -749,6 +756,17 @@ asrRoutes.get("/capability", async (c) => {
   });
 });
 
+// ── POST /api/asr/volcengine-probe — handshake + minimal roundtrip ─
+asrRoutes.post("/volcengine-probe", async (c) => {
+  try {
+    const body = await c.req.json<{ apiKeys?: any }>();
+    const probe = await probeVolcengineWs(body?.apiKeys ?? {});
+    return c.json(probe);
+  } catch (err: any) {
+    return c.json({ ok: false, error: err?.message || "probe failed" }, 500);
+  }
+});
+
 // ── POST /api/asr/transcribe — upload file ──────────────────────────
 asrRoutes.post("/transcribe", async (c) => {
   const body = await c.req.parseBody();
@@ -780,11 +798,12 @@ asrRoutes.post("/transcribe", async (c) => {
     // Split if long
     const chunks = await splitAudio(audioPath, config.maxChunkSec, workDir);
 
-    // Transcribe each chunk using provider
-    const allSegments: Segment[] = [];
-    let timeOffset = 0;
-    let usedProvider = "";
-    let detectedLanguage = language;
+	    // Transcribe each chunk using provider
+	    const allSegments: Segment[] = [];
+	    let timeOffset = 0;
+	    let usedProvider = "";
+	    let detectedLanguage = language;
+	    let completion: "final" | "partial_complete" = "final";
 
     for (const chunk of chunks) {
       const options = { language, format: "wav", apiKeys };
@@ -795,9 +814,12 @@ asrRoutes.post("/transcribe", async (c) => {
       }
 
       usedProvider = result.provider;
-      if (result.language && result.language !== "auto") {
-        detectedLanguage = result.language;
-      }
+	      if (result.language && result.language !== "auto") {
+	        detectedLanguage = result.language;
+	      }
+	      if (result.completion === "partial_complete") {
+	        completion = "partial_complete";
+	      }
 
       for (const seg of result.segments) {
         allSegments.push({
@@ -811,19 +833,150 @@ asrRoutes.post("/transcribe", async (c) => {
       }
     }
 
-    return c.json({
-      ok: true,
-      language: detectedLanguage,
-      provider: usedProvider,
-      full_text: allSegments.map((s) => s.text).join(" "),
-      segments: allSegments,
-    });
+	    return c.json({
+	      ok: true,
+	      language: detectedLanguage,
+	      provider: usedProvider,
+	      completion,
+	      full_text: allSegments.map((s) => s.text).join(" "),
+	      segments: allSegments,
+	    });
   } catch (err: any) {
     console.error("Transcribe error:", err);
     return c.json({ ok: false, error: err.message }, 500);
   } finally {
     await cleanupDir(workDir);
   }
+});
+
+// ── POST /api/asr/transcribe-url-live — NDJSON stream (volcengine) ──
+asrRoutes.post("/transcribe-url-live", async (c) => {
+  const {
+    url,
+    language = "auto",
+    apiKeys = {},
+    mode = "auto",
+    mediaUrl,
+    mediaHeaders,
+  } = await c.req.json<{
+    url: string;
+    language?: string;
+    apiKeys?: any;
+    mode?: "auto" | "pipe" | "download-fallback";
+    mediaUrl?: string;
+    mediaHeaders?: {
+      referer?: string;
+      origin?: string;
+      userAgent?: string;
+      cookie?: string;
+    };
+  }>();
+
+  if (!url) return c.json({ ok: false, error: "Missing url" }, 400);
+  if ((apiKeys?.asrProvider || config.asrProvider) !== "volcengine") {
+    return c.json({ ok: false, error: "live route currently supports volcengine only" }, 400);
+  }
+  const liveMode = String(apiKeys?.volcengineMode || config.volcengineMode || "bigmodel_nostream");
+  const liveResource = liveMode === "flash" ? FIXED_VOLCENGINE_RESOURCE_FLASH : FIXED_VOLCENGINE_RESOURCE_SAUC;
+  console.log(
+    `[ASR] mode_lock route=live provider=volcengine mode=${liveMode} resource=${liveResource} allowAutoDowngrade=${Boolean(apiKeys?.allowAsrAutoDowngrade)}`,
+  );
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      let closed = false;
+      const safeSend = (obj: any) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // ignore double-close race
+        }
+      };
+
+      (async () => {
+        const workDir = await mkdtemp(join(tmpdir(), "subplayer-"));
+        try {
+          // Native subtitles shortcut: if exists, return immediately.
+          const nativeSubs = mediaUrl ? null : await tryExtractNativeSubtitles(url, language, workDir);
+          if (nativeSubs && nativeSubs.segments.length > 0) {
+            safeSend({
+              type: "done",
+              language: nativeSubs.language,
+              provider: "native-subtitle",
+              segments: nativeSubs.segments,
+            });
+            return;
+          }
+
+          const audioPath = join(workDir, "audio.wav");
+          if (mediaUrl) {
+            await extractAudioFromDirectMediaUrl(mediaUrl, audioPath, mediaHeaders);
+          } else {
+            const cached = getCachedVideoByOriginUrl(url);
+            if (cached) {
+              console.log(`[ASR] Reusing cached video for ASR: ${cached.filePath}`);
+              await extractAudio(cached.filePath, audioPath);
+            } else {
+              const rawPath = await downloadOrPipeAudioSource(url, workDir, mode);
+              await extractAudio(rawPath, audioPath);
+            }
+          }
+
+          const live = await transcribeVolcengineLive(
+            audioPath,
+            {
+              language,
+              format: "wav",
+              apiKeys,
+            },
+            (segments) => {
+              safeSend({
+                type: "partial",
+                language,
+                provider: "volcengine",
+                segments,
+              });
+            },
+          );
+
+          safeSend({
+            type: "done",
+            language: live.language || language,
+            provider: "volcengine",
+            segments: live.segments,
+            completion: live.completion,
+          });
+        } catch (err: any) {
+          safeSend({ type: "error", error: err?.message || "live transcribe failed" });
+        } finally {
+          await cleanupDir(workDir);
+          safeClose();
+        }
+      })().catch((err) => {
+        safeSend({ type: "error", error: err?.message || "live transcribe crashed" });
+        safeClose();
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
 });
 
 // ── POST /api/asr/transcribe-url — from URL ────────────────────────
@@ -855,6 +1008,11 @@ asrRoutes.post("/transcribe-url", async (c) => {
 
   const requestedProvider = String(apiKeys.asrProvider || bodyProvider || config.asrProvider || "auto");
   const providerOrder = await resolveProviderOrder(requestedProvider, apiKeys);
+  const classicMode = String(apiKeys?.volcengineMode || config.volcengineMode || "bigmodel_nostream");
+  const classicResource = classicMode === "flash" ? FIXED_VOLCENGINE_RESOURCE_FLASH : FIXED_VOLCENGINE_RESOURCE_SAUC;
+  console.log(
+    `[ASR] mode_lock route=classic requested=${requestedProvider} order=${providerOrder.join(">")} mode=${classicMode} resource=${classicResource} allowAutoDowngrade=${Boolean(apiKeys?.allowAsrAutoDowngrade)}`,
+  );
 
   const workDir = await mkdtemp(join(tmpdir(), "subplayer-"));
 
@@ -886,9 +1044,15 @@ asrRoutes.post("/transcribe-url", async (c) => {
       console.log(`[ASR] Using direct-captured mediaUrl for ASR: ${mediaUrl.slice(0, 120)}`);
       await extractAudioFromDirectMediaUrl(mediaUrl, audioPath, mediaHeaders);
     } else {
-      // Standard path: use yt-dlp (pipe or download fallback), then normalize.
-      const rawPath = await downloadOrPipeAudioSource(url, workDir, mode);
-      await extractAudio(rawPath, audioPath);
+      const cached = getCachedVideoByOriginUrl(url);
+      if (cached) {
+        console.log(`[ASR] Reusing cached video for ASR: ${cached.filePath}`);
+        await extractAudio(cached.filePath, audioPath);
+      } else {
+        // Standard path: use yt-dlp (pipe or download fallback), then normalize.
+        const rawPath = await downloadOrPipeAudioSource(url, workDir, mode);
+        await extractAudio(rawPath, audioPath);
+      }
     }
 
     // Split if long
@@ -898,6 +1062,7 @@ asrRoutes.post("/transcribe-url", async (c) => {
     let timeOffset = 0;
     let usedProvider = "";
     let detectedLanguage = language; // will be updated from ASR result
+    let completion: "final" | "partial_complete" = "final";
 
     for (const chunk of chunks) {
       const options = { language, format: "wav", apiKeys };
@@ -911,6 +1076,9 @@ asrRoutes.post("/transcribe-url", async (c) => {
       // Use detected language from ASR (e.g. "en", "zh", "ja")
       if (result.language && result.language !== "auto") {
         detectedLanguage = result.language;
+      }
+      if (result.completion === "partial_complete") {
+        completion = "partial_complete";
       }
 
       for (const seg of result.segments) {
@@ -927,6 +1095,7 @@ asrRoutes.post("/transcribe-url", async (c) => {
       ok: true,
       language: detectedLanguage,
       provider: usedProvider,
+      completion,
       full_text: allSegments.map((s) => s.text).join(" "),
       segments: allSegments,
     });

@@ -13,6 +13,10 @@ export interface TranscribeOptions {
   apiKeys?: {
     volcengineAppId?: string;
     volcengineToken?: string;
+    volcengineSecretKey?: string;
+    volcengineResourceId?: string;
+    volcengineMode?: "bigmodel_nostream" | "bigmodel" | "bigmodel_async" | "flash" | "legacy_auc";
+    allowAsrAutoDowngrade?: boolean;
     aliyunKey?: string;
   };
 }
@@ -23,6 +27,7 @@ export interface TranscribeResult {
   segments: Segment[];
   full_text: string;
   provider: string;        // which provider fulfilled this request
+  completion?: "final" | "partial_complete";
   error?: string;
 }
 

@@ -6,6 +6,7 @@ import type {
   DirectCapturePayload,
   PreprocessResultResponse,
   AsrCapabilityResponse,
+  VolcengineProbeResponse,
 } from "@/types";
 
 const API_BASE = "/api";
@@ -19,15 +20,23 @@ function getApiKeys() {
     return {
       volcengineAppId: state?.volcengineAppId,
       volcengineToken: state?.volcengineToken,
+      volcengineSecretKey: state?.volcengineSecretKey,
+      volcengineResourceId: state?.volcengineResourceId,
+      volcengineMode: state?.volcengineMode,
       aliyunKey: state?.aliyunKey,
       geminiKey: state?.geminiKey,
       deepseekKey: state?.deepseekKey,
       translateProvider: state?.translateProvider,
       asrProvider: state?.asrProvider,
+      allowAsrAutoDowngrade: state?.allowAsrAutoDowngrade,
     };
   } catch {
     return {};
   }
+}
+
+function mergeApiKeys(override?: Record<string, unknown>) {
+  return { ...getApiKeys(), ...(override || {}) };
 }
 
 // ── ASR ─────────────────────────────────────────────────────────────
@@ -99,6 +108,7 @@ export async function transcribeUrl(
       cookie?: string;
     };
   },
+  apiKeysOverride?: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<TranscribeResult> {
   // ASR can take minutes for long videos — use 5min timeout
@@ -120,7 +130,7 @@ export async function transcribeUrl(
         language,
         model,
         mode: "auto",
-        apiKeys: getApiKeys(),
+        apiKeys: mergeApiKeys(apiKeysOverride),
         mediaUrl: directCapture?.mediaUrl,
         mediaHeaders: directCapture?.headers,
       }),
@@ -132,6 +142,104 @@ export async function transcribeUrl(
     }
 
     return res.json();
+  } finally {
+    if (signal) signal.removeEventListener("abort", onAbort);
+    clearTimeout(timeout);
+  }
+}
+
+export async function transcribeUrlLive(
+  url: string,
+  language = "auto",
+  model = "multilingual",
+  directCapture?: {
+    mediaUrl: string;
+    headers?: {
+      referer?: string;
+      origin?: string;
+      userAgent?: string;
+      cookie?: string;
+    };
+  },
+  handlers?: {
+    onPartial?: (payload: { segments: Segment[]; language?: string }) => void | Promise<void>;
+    onDone?: (payload: { segments: Segment[]; language?: string; provider?: string; completion?: "final" | "partial_complete" }) => void | Promise<void>;
+  },
+  apiKeysOverride?: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<TranscribeResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 600_000);
+  const onAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    const res = await fetch(`${API_BASE}/asr/transcribe-url-live`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        url,
+        language,
+        model,
+        mode: "auto",
+        apiKeys: mergeApiKeys(apiKeysOverride),
+        mediaUrl: directCapture?.mediaUrl,
+        mediaHeaders: directCapture?.headers,
+      }),
+    });
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Server error: ${res.status} ${text}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let finalResult: TranscribeResult | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx = buf.indexOf("\n");
+      while (idx >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        idx = buf.indexOf("\n");
+        if (!line) continue;
+        let msg: any = null;
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (msg.type === "partial") {
+          await handlers?.onPartial?.({
+            segments: msg.segments || [],
+            language: msg.language,
+          });
+        } else if (msg.type === "done") {
+          const payload = {
+            ok: true,
+            language: msg.language || language,
+            provider: msg.provider,
+            completion: msg.completion,
+            segments: msg.segments || [],
+            full_text: (msg.segments || []).map((s: Segment) => s.text).join(" "),
+          } as TranscribeResult;
+          finalResult = payload;
+          await handlers?.onDone?.(payload);
+        } else if (msg.type === "error") {
+          throw new Error(msg.error || "Live ASR failed");
+        }
+      }
+    }
+
+    if (finalResult) return finalResult;
+    throw new Error("Live ASR stream ended without final result");
   } finally {
     if (signal) signal.removeEventListener("abort", onAbort);
     clearTimeout(timeout);
@@ -290,6 +398,18 @@ export async function getAsrCapability(): Promise<AsrCapabilityResponse> {
   const res = await fetch(`${API_BASE}/asr/capability?apiKeys=${q}`);
   if (!res.ok) {
     return { ok: false, error: `capability failed (${res.status})` };
+  }
+  return res.json();
+}
+
+export async function probeVolcengine(): Promise<VolcengineProbeResponse> {
+  const res = await fetch(`${API_BASE}/asr/volcengine-probe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKeys: getApiKeys() }),
+  });
+  if (!res.ok) {
+    return { ok: false, error: `probe failed (${res.status})` };
   }
   return res.json();
 }

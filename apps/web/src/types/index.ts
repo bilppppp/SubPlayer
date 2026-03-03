@@ -13,6 +13,7 @@ export interface TranscribeResult {
   full_text: string;
   segments: Segment[];
   provider?: string;
+  completion?: "final" | "partial_complete";
   error?: string;
 }
 
@@ -141,5 +142,21 @@ export interface AsrCapabilityResponse {
   fallback_chain?: string[];
   capability?: AsrCapabilityPayload;
   provider_order_auto?: string[];
+  error?: string;
+}
+
+export interface VolcengineProbeAttempt {
+  resourceId: string;
+  ok: boolean;
+  logid?: string;
+  error?: string;
+}
+
+export interface VolcengineProbeResponse {
+  ok: boolean;
+  mode?: string;
+  attempts?: VolcengineProbeAttempt[];
+  chosenResourceId?: string;
+  message?: string;
   error?: string;
 }
