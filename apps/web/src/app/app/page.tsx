@@ -76,10 +76,43 @@ function decodePlaylistParam(encoded: string | null): string[] {
     const raw = atob(encoded);
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((x): x is string => typeof x === "string" && /^https?:\/\//i.test(x));
+    return parsed
+      .map((x) => {
+        if (typeof x === "string") return x;
+        if (x && typeof x === "object" && typeof (x as { url?: unknown }).url === "string") {
+          return (x as { url: string }).url;
+        }
+        return "";
+      })
+      .filter((x): x is string => !!x && /^https?:\/\//i.test(x));
   } catch {
     return [];
   }
+}
+
+function decodePlaylistLangPrefs(encoded: string | null): Record<string, { sourceLang: string; targetLang: string }> {
+  const out: Record<string, { sourceLang: string; targetLang: string }> = {};
+  if (!encoded) return out;
+  try {
+    const raw = atob(encoded);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return out;
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const url = typeof (item as { url?: unknown }).url === "string" ? (item as { url: string }).url : "";
+      if (!url) continue;
+      const sourceLang = typeof (item as { sourceLang?: unknown }).sourceLang === "string"
+        ? (item as { sourceLang: string }).sourceLang
+        : "auto";
+      const targetLang = typeof (item as { targetLang?: unknown }).targetLang === "string"
+        ? (item as { targetLang: string }).targetLang
+        : "auto";
+      out[url] = { sourceLang, targetLang };
+    }
+  } catch {
+    // ignore malformed playlist metadata
+  }
+  return out;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -195,6 +228,18 @@ function composeAlignedSegments(raw: Segment[], translations: string[]): Segment
   }));
 }
 
+function baseLang(lang: string): string {
+  return String(lang || "auto").toLowerCase().split("-")[0];
+}
+
+function shouldSkipTranslation(sourceLang: string, targetLang: string): boolean {
+  const s = baseLang(sourceLang);
+  const t = baseLang(targetLang);
+  if (!s || !t) return false;
+  if (s === "auto" || t === "auto") return false;
+  return s === t;
+}
+
 type PipelineCheckpoint = {
   version: 1;
   url: string;
@@ -252,6 +297,7 @@ export default function AppPage() {
   const [pendingLanguage, setPendingLanguage] = useState("auto");
   const [pendingTargetLang, setPendingTargetLang] = useState("auto");
   const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
+  const [playlistLangPrefs, setPlaylistLangPrefs] = useState<Record<string, { sourceLang: string; targetLang: string }>>({});
   const [playlistIndex, setPlaylistIndex] = useState(0);
   const [autoNext, setAutoNext] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -734,6 +780,21 @@ export default function AppPage() {
                 ? targetLangPreference
                 : (sourceLang === "zh" ? "en" : "zh");
               setTargetLang(target);
+              if (shouldSkipTranslation(sourceLang, target)) {
+                for (let j = 0; j < chunkSize; j += 1) {
+                  liveTranslations[nextTranslate + j] = liveRaw[nextTranslate + j]?.text || "";
+                }
+                nextTranslate += chunkSize;
+                liveTranslatedUntil = Math.max(liveTranslatedUntil, nextTranslate);
+                setTask({
+                  phase: "translating",
+                  progress: Math.round((nextTranslate / Math.max(1, liveRaw.length)) * 100),
+                  message: "源语言与目标语言一致，已跳过翻译",
+                });
+                setRawTimelineSegments([...liveRaw]);
+                setTranslatedTexts(Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""));
+                return;
+              }
               setTask({
                 phase: "translating",
                 progress: Math.round((nextTranslate / Math.max(1, liveRaw.length)) * 100),
@@ -905,6 +966,23 @@ export default function AppPage() {
             console.log(
               `[Translate] source=${sourceLang}, target=${target}, segments=${newSegments.length}`,
             );
+            if (shouldSkipTranslation(sourceLang, target)) {
+              const merged = newSegments.map((s) => ({ ...s, translation: s.text }));
+              setTracksFromAligned(merged);
+              if (input.type === "url" && inputUrl) {
+                writeCheckpoint({
+                  version: 1,
+                  url: inputUrl,
+                  language,
+                  fileName: input.name,
+                  detectedLang,
+                  targetLang: target,
+                  segments: merged,
+                  nextTranslateIndex: merged.length,
+                  updatedAt: Date.now(),
+                });
+              }
+            } else {
 
             // Translate in small client-side chunks to avoid Next.js proxy
             // 30 s timeout. Each chunk finishes in ~10-15 s.
@@ -960,6 +1038,7 @@ export default function AppPage() {
             console.log(
               `[Translate] Done: ${translated}/${newSegments.length} translated`,
             );
+            }
           } catch (translationErr) {
             // Translation failed but transcription succeeded — still show subtitles
             console.warn("Translation failed:", translationErr);
@@ -1005,6 +1084,7 @@ export default function AppPage() {
     const url = playlistUrls[idx];
     if (!url) return;
     if (idx === playlistIndex && task.phase === "done") return;
+    const prefs = playlistLangPrefs[url] || { sourceLang: "auto", targetLang: "auto" };
     setPlaylistIndex(idx);
     setLastCompletedPlaylistIndex(null);
     setLastCompletedRunMode(null);
@@ -1014,19 +1094,21 @@ export default function AppPage() {
         url,
         name: buildUrlInputName(url),
       },
-      "auto",
-      "auto",
+      prefs.sourceLang || "auto",
+      prefs.targetLang || "auto",
       undefined,
       mode,
     );
-  }, [playlistIndex, playlistUrls, runPipeline, task.phase]);
+  }, [playlistIndex, playlistLangPrefs, playlistUrls, runPipeline, task.phase]);
 
   // ── Initial query parse (?url=...&autorun=1&playlist=...&idx=...) ──
   useEffect(() => {
     if (queryInitRef.current) return;
     queryInitRef.current = true;
 
-    const playlist = decodePlaylistParam(searchParams.get("playlist"));
+    const rawPlaylist = searchParams.get("playlist");
+    const playlist = decodePlaylistParam(rawPlaylist);
+    const playlistPrefs = decodePlaylistLangPrefs(rawPlaylist);
     const requestedIdx = Number(searchParams.get("idx") ?? "0");
     const safeIdx = Number.isFinite(requestedIdx)
       ? Math.max(0, Math.min(Math.trunc(requestedIdx), Math.max(playlist.length - 1, 0)))
@@ -1034,10 +1116,14 @@ export default function AppPage() {
 
     if (playlist.length > 0) {
       setPlaylistUrls(playlist);
+      setPlaylistLangPrefs(playlistPrefs);
       setPlaylistIndex(safeIdx);
     }
 
     const queryUrl = searchParams.get("url")?.trim() || playlist[safeIdx];
+    const queryPrefs = queryUrl
+      ? (playlistPrefs[queryUrl] || { sourceLang: "auto", targetLang: "auto" })
+      : { sourceLang: "auto", targetLang: "auto" };
     const shouldAutorun = searchParams.get("autorun") === "1";
     if (!queryUrl || !shouldAutorun) return;
 
@@ -1047,8 +1133,8 @@ export default function AppPage() {
         url: queryUrl,
         name: buildUrlInputName(queryUrl),
       },
-      "auto",
-      "auto",
+      queryPrefs.sourceLang || "auto",
+      queryPrefs.targetLang || "auto",
     );
   }, [runPipeline, searchParams]);
 

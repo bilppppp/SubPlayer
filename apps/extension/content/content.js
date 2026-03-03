@@ -73,7 +73,7 @@ function syncSubtitles() {
 }
 
 // ── Message listener ────────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "SHOW_SUBTITLES") {
     segments = message.segments || [];
     createOverlay();
@@ -96,6 +96,23 @@ chrome.runtime.onMessage.addListener((message) => {
     if (video) {
       video.currentTime = message.time;
       video.play().catch(() => {});
+    }
+  }
+
+  if (message.type === "EXPORT_SUBPLAYER_SETTINGS") {
+    try {
+      const raw = window.localStorage.getItem("subplayer-settings");
+      if (!raw) {
+        sendResponse?.({ ok: false, error: "subplayer-settings not found in localStorage" });
+        return false;
+      }
+      const parsed = JSON.parse(raw);
+      const state = parsed?.state || {};
+      sendResponse?.({ ok: true, settings: state });
+      return false;
+    } catch (err) {
+      sendResponse?.({ ok: false, error: `read settings failed: ${err?.message || "unknown"}` });
+      return false;
     }
   }
 });

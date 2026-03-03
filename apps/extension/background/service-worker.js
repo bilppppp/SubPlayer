@@ -193,6 +193,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "GET_BROWSER_SETTINGS_FROM_ACTIVE_TAB") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tabId = tabs[0]?.id;
+      if (!tabId) {
+        sendResponse({ ok: false, error: "No active tab" });
+        return;
+      }
+      chrome.tabs.sendMessage(tabId, { type: "EXPORT_SUBPLAYER_SETTINGS" }, (res) => {
+        if (chrome.runtime?.lastError) {
+          sendResponse({
+            ok: false,
+            error: `sync runtime error: ${chrome.runtime.lastError.message}`,
+          });
+          return;
+        }
+        if (!res?.ok) {
+          sendResponse({ ok: false, error: res?.error || "No settings found in current tab" });
+          return;
+        }
+        sendResponse({
+          ok: true,
+          settings: res.settings || {},
+          source: "active-tab",
+        });
+      });
+    });
+    return true;
+  }
+
   // Capture one real media request from the active tab to reuse its
   // authenticated URL + headers in gateway prepare-direct.
   if (message.type === "CAPTURE_MEDIA_ONCE") {

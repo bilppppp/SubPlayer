@@ -100,6 +100,18 @@ function pickTargetLang(detectedLang: string, requested: string): string {
   return detectedLang === "zh" ? "en" : "zh";
 }
 
+function baseLang(lang: string): string {
+  return String(lang || "auto").toLowerCase().split("-")[0];
+}
+
+function shouldSkipTranslation(sourceLang: string, targetLang: string): boolean {
+  const s = baseLang(sourceLang);
+  const t = baseLang(targetLang);
+  if (!s || !t) return false;
+  if (s === "auto" || t === "auto") return false;
+  return s === t;
+}
+
 async function runJob(job: JobRecord) {
   const touch = (patch: Partial<JobRecord>) => {
     const next: JobRecord = {
@@ -132,15 +144,18 @@ async function runJob(job: JobRecord) {
     const detectedLang = String(asr.language || job.sourceLang || "auto");
     let targetLang = pickTargetLang(detectedLang, job.targetLang);
     let merged = [...baseSegments];
+    const skipTranslation = shouldSkipTranslation(detectedLang, targetLang);
 
     touch({
       progress: 35,
       step: "translate",
-      message: "正在翻译字幕...",
+      message: skipTranslation ? "源/目标语言一致，跳过翻译" : "正在翻译字幕...",
       targetLang,
     });
 
-    if (merged.length > 0) {
+    if (skipTranslation) {
+      merged = merged.map((s) => ({ ...s, translation: s.text }));
+    } else if (merged.length > 0) {
       const CHUNK = 10;
       for (let i = 0; i < merged.length; i += CHUNK) {
         const chunk = merged.slice(i, i + CHUNK);
@@ -352,4 +367,3 @@ jobsRoutes.post("/status-batch", async (c) => {
 
   return c.json({ ok: true, statuses });
 });
-
