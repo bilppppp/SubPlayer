@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
 import { Languages, ListVideo, Pause, Play, SkipBack, SkipForward, Square, Subtitles, Type } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -267,8 +266,6 @@ function checkpointKey(url: string): string {
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function AppPage() {
-  const searchParams = useSearchParams();
-
   type CaptureCandidate = {
     mediaUrl: string;
     kind?: "hls" | "dash" | "mp4" | "unknown";
@@ -1105,6 +1102,8 @@ export default function AppPage() {
   useEffect(() => {
     if (queryInitRef.current) return;
     queryInitRef.current = true;
+    if (typeof window === "undefined") return;
+    const searchParams = new URLSearchParams(window.location.search);
 
     const rawPlaylist = searchParams.get("playlist");
     const playlist = decodePlaylistParam(rawPlaylist);
@@ -1136,7 +1135,7 @@ export default function AppPage() {
       queryPrefs.sourceLang || "auto",
       queryPrefs.targetLang || "auto",
     );
-  }, [runPipeline, searchParams]);
+  }, [runPipeline]);
 
   // ── Auto-play next in playlist ──────────────────────────────────
   useEffect(() => {
