@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Segment } from "@/types";
 
 /**
@@ -16,31 +16,36 @@ export function useSubtitleSync(
   const [activeIndex, setActiveIndex] = useState(-1);
   const rafRef = useRef(0);
 
-  const sync = useCallback(() => {
-    if (segments.length === 0) {
-      rafRef.current = requestAnimationFrame(sync);
-      return;
-    }
-
-    const t = getTime();
-    let idx = -1;
-
-    for (let i = 0; i < segments.length; i++) {
-      if (t >= segments[i].start && t < segments[i].end) {
-        idx = i;
-        break;
-      }
-      if (t < segments[i].start) break;
-    }
-
-    setActiveIndex((prev) => (prev === idx ? prev : idx));
-    rafRef.current = requestAnimationFrame(sync);
-  }, [getTime, segments]);
-
   useEffect(() => {
+    let cancelled = false;
+    const sync = () => {
+      if (cancelled) return;
+      if (segments.length === 0) {
+        rafRef.current = requestAnimationFrame(sync);
+        return;
+      }
+
+      const t = getTime();
+      let idx = -1;
+
+      for (let i = 0; i < segments.length; i++) {
+        if (t >= segments[i].start && t < segments[i].end) {
+          idx = i;
+          break;
+        }
+        if (t < segments[i].start) break;
+      }
+
+      setActiveIndex((prev) => (prev === idx ? prev : idx));
+      rafRef.current = requestAnimationFrame(sync);
+    };
+
     rafRef.current = requestAnimationFrame(sync);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [sync]);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [getTime, segments]);
 
   return activeIndex;
 }

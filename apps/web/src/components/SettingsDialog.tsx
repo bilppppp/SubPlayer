@@ -106,20 +106,20 @@ export function SettingsDialog() {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Settings">
+                <Button variant="ghost" size="icon" className="border border-black/70 hover:bg-black hover:text-neon" aria-label="Settings">
                     <Settings className="h-4 w-4" />
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="sm:max-w-[425px] border-black bg-canvas">
                 <DialogHeader>
-                    <DialogTitle>设置 (Settings)</DialogTitle>
-                    <DialogDescription>
+                    <DialogTitle className="font-mono uppercase tracking-wide">设置 (Settings)</DialogTitle>
+                    <DialogDescription className="text-foreground/70">
                         配置 API 密钥和界面外观
                     </DialogDescription>
                 </DialogHeader>
 
                 <Tabs defaultValue="api" className="w-full">
-                    <TabsList className="grid w-full grid-cols-4">
+                    <TabsList className="grid w-full grid-cols-4 border border-black/70 bg-white">
                         <TabsTrigger value="api">API 密钥</TabsTrigger>
                         <TabsTrigger value="diag">诊断</TabsTrigger>
                         <TabsTrigger value="appearance">外观样式</TabsTrigger>
@@ -127,16 +127,33 @@ export function SettingsDialog() {
                     </TabsList>
 
                     <TabsContent value="api" className="space-y-6 py-4">
+                        <div className="space-y-3 rounded-[20px] border border-black/70 bg-white/50 p-4">
+                            <Label className="text-base font-semibold">网关访问密钥 (Gateway API Key)</Label>
+                            <div className="space-y-2">
+                                <Label>API Key</Label>
+                                <Input
+                                    type="password"
+                                    value={settings.gatewayApiKey}
+                                    onChange={(e) => settings.setApiKeys({ gatewayApiKey: e.target.value })}
+                                    placeholder="可选：用于网关鉴权"
+                                    className="border-black bg-white"
+                                />
+                                <p className="text-xs text-foreground/70">
+                                    若网关启用了 API Key 鉴权，请在此填写；将自动附加到所有 /api 请求头。
+                                </p>
+                            </div>
+                        </div>
+
                         <div className="space-y-4">
                             <Label className="text-base font-semibold">服务商凭据 (Credentials)</Label>
                             <Select
                                 value={activeCredTab}
                                 onValueChange={(val) => setActiveCredTab(val)}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger className="border-black bg-white">
                                     <SelectValue placeholder="选择服务商" />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="border-black bg-canvas">
                                     <SelectItem value="volcengine">火山引擎 (Volcengine)</SelectItem>
                                     <SelectItem value="aliyun">阿里云百炼 (Dashscope)</SelectItem>
                                     <SelectItem value="gemini">Google Gemini</SelectItem>
@@ -144,13 +161,14 @@ export function SettingsDialog() {
                                 </SelectContent>
                             </Select>
 
-                            <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-                                <p className="text-xs text-muted-foreground">
+                            <div className="flex items-center justify-between rounded-xl border border-black/70 bg-white/50 px-3 py-2">
+                                <p className="text-xs text-foreground/70">
                                     服务商凭据表单默认折叠，按需展开
                                 </p>
                                 <Button
                                     size="sm"
                                     variant="outline"
+                                    className="border-black bg-white hover:bg-black hover:text-white"
                                     onClick={() => setShowCredForm((v) => !v)}
                                 >
                                     {showCredForm ? "收起配置" : "展开配置"}
@@ -158,7 +176,7 @@ export function SettingsDialog() {
                             </div>
 
                             {showCredForm && activeCredTab === "volcengine" && (
-                                <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
+                                <div className="space-y-3 rounded-[20px] border border-black/70 bg-white/50 p-4">
                                     <div className="space-y-2">
                                         <Label>App ID</Label>
                                         <Input
@@ -166,7 +184,7 @@ export function SettingsDialog() {
                                             value={settings.volcengineAppId}
                                             onChange={(e) => settings.setApiKeys({ volcengineAppId: e.target.value })}
                                             placeholder="在此输入 App ID"
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
                                     </div>
                                     <div className="space-y-2">
@@ -176,7 +194,7 @@ export function SettingsDialog() {
                                             value={settings.volcengineToken}
                                             onChange={(e) => settings.setApiKeys({ volcengineToken: e.target.value })}
                                             placeholder="在此输入 Token"
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
                                     </div>
                                     <div className="space-y-2">
@@ -186,7 +204,7 @@ export function SettingsDialog() {
                                             value={settings.volcengineSecretKey}
                                             onChange={(e) => settings.setApiKeys({ volcengineSecretKey: e.target.value })}
                                             placeholder="可选，不填也可用"
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
                                     </div>
                                     <div className="space-y-2">
@@ -195,9 +213,9 @@ export function SettingsDialog() {
                                             type="text"
                                             value={settings.volcengineMode === "flash" ? "volc.bigasr.auc_turbo" : "volc.seedasr.sauc.duration"}
                                             readOnly
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
-                                        <p className="text-[11px] text-muted-foreground">
+                                        <p className="text-[11px] text-foreground/70">
                                             按模式固定：nostream=`volc.seedasr.sauc.duration`，flash=`volc.bigasr.auc_turbo`
                                         </p>
                                     </div>
@@ -207,22 +225,22 @@ export function SettingsDialog() {
                                             value={settings.volcengineMode}
                                             onValueChange={(val: "bigmodel_nostream" | "flash" | "legacy_auc") => settings.setApiKeys({ volcengineMode: val })}
                                         >
-                                            <SelectTrigger>
+                                            <SelectTrigger className="border-black bg-white">
                                                 <SelectValue />
                                             </SelectTrigger>
-                                            <SelectContent>
+                                            <SelectContent className="border-black bg-canvas">
                                                 <SelectItem value="bigmodel_nostream">豆包 nostream</SelectItem>
                                                 <SelectItem value="flash">录音极速版 Flash（推荐）</SelectItem>
                                                 <SelectItem value="legacy_auc">旧版 AUC (回退)</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
-                                    <p className="text-xs text-muted-foreground">用于高精度的语音识别 (ASR)。</p>
+                                    <p className="text-xs text-foreground/70">用于高精度的语音识别 (ASR)。</p>
                                 </div>
                             )}
 
                             {showCredForm && activeCredTab === "aliyun" && (
-                                <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
+                                <div className="space-y-3 rounded-[20px] border border-black/70 bg-white/50 p-4">
                                     <div className="space-y-2">
                                         <Label>API Key</Label>
                                         <Input
@@ -230,15 +248,15 @@ export function SettingsDialog() {
                                             value={settings.aliyunKey}
                                             onChange={(e) => settings.setApiKeys({ aliyunKey: e.target.value })}
                                             placeholder="sk-..."
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
                                     </div>
-                                    <p className="text-xs text-muted-foreground">支持 SenseVoice 语音识别，及 DeepSeek 模型翻译。</p>
+                                    <p className="text-xs text-foreground/70">支持 SenseVoice 语音识别，及 DeepSeek 模型翻译。</p>
                                 </div>
                             )}
 
                             {showCredForm && activeCredTab === "gemini" && (
-                                <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
+                                <div className="space-y-3 rounded-[20px] border border-black/70 bg-white/50 p-4">
                                     <div className="space-y-2">
                                         <Label>API Key</Label>
                                         <Input
@@ -246,15 +264,15 @@ export function SettingsDialog() {
                                             value={settings.geminiKey}
                                             onChange={(e) => settings.setApiKeys({ geminiKey: e.target.value })}
                                             placeholder="AIza..."
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
                                     </div>
-                                    <p className="text-xs text-muted-foreground">用于极其快速准确的字幕文本翻译。</p>
+                                    <p className="text-xs text-foreground/70">用于极其快速准确的字幕文本翻译。</p>
                                 </div>
                             )}
 
                             {showCredForm && activeCredTab === "deepseek" && (
-                                <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
+                                <div className="space-y-3 rounded-[20px] border border-black/70 bg-white/50 p-4">
                                     <div className="space-y-2">
                                         <Label>API Key</Label>
                                         <Input
@@ -262,15 +280,15 @@ export function SettingsDialog() {
                                             value={settings.deepseekKey}
                                             onChange={(e) => settings.setApiKeys({ deepseekKey: e.target.value })}
                                             placeholder="sk-..."
-                                            className="bg-background"
+                                            className="border-black bg-white"
                                         />
                                     </div>
-                                    <p className="text-xs text-muted-foreground">DeepSeek 官方 API 支持。</p>
+                                    <p className="text-xs text-foreground/70">DeepSeek 官方 API 支持。</p>
                                 </div>
                             )}
                         </div>
 
-                        <div className="space-y-4 pt-4 border-t">
+                        <div className="space-y-4 pt-4 border-t border-black/60">
                             <Label className="text-base font-semibold">功能调度 (Service Routing)</Label>
 
                             <div className="space-y-2">
@@ -279,10 +297,10 @@ export function SettingsDialog() {
                                     value={settings.asrProvider || "auto"}
                                     onValueChange={(val: "auto" | "volcengine" | "aliyun" | "local") => settings.setApiKeys({ asrProvider: val })}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger className="border-black bg-white">
                                         <SelectValue />
                                     </SelectTrigger>
-                                    <SelectContent>
+                                    <SelectContent className="border-black bg-canvas">
                                         <SelectItem value="auto">自动 (跟随配置系统依赖)</SelectItem>
                                         <SelectItem value="volcengine">火山引擎 (Volcengine)</SelectItem>
                                         <SelectItem value="aliyun">阿里云百炼 (SenseVoice)</SelectItem>
@@ -291,10 +309,10 @@ export function SettingsDialog() {
                                 </Select>
                             </div>
 
-                            <div className="flex items-center justify-between rounded-xl border bg-card p-3">
+                            <div className="flex items-center justify-between rounded-[20px] border border-black/70 bg-white/50 p-3">
                                 <div>
                                     <p className="text-sm font-medium">允许 ASR 自动降级</p>
-                                    <p className="text-xs text-muted-foreground">
+                                    <p className="text-xs text-foreground/70">
                                         关闭后将严格使用当前选择的接入模式，不自动切到 Flash 或其它模式。
                                     </p>
                                 </div>
@@ -302,7 +320,7 @@ export function SettingsDialog() {
                                     type="checkbox"
                                     checked={settings.allowAsrAutoDowngrade}
                                     onChange={(e) => settings.setApiKeys({ allowAsrAutoDowngrade: e.target.checked })}
-                                    className="rounded border-border bg-background"
+                                    className="rounded border-black bg-white"
                                 />
                             </div>
 
@@ -312,10 +330,10 @@ export function SettingsDialog() {
                                     value={settings.translateProvider || "auto"}
                                     onValueChange={(val: "auto" | "gemini" | "deepseek" | "qwen") => settings.setApiKeys({ translateProvider: val })}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger className="border-black bg-white">
                                         <SelectValue />
                                     </SelectTrigger>
-                                    <SelectContent>
+                                    <SelectContent className="border-black bg-canvas">
                                         <SelectItem value="auto">自动 (优先 Gemini, 备用目标)</SelectItem>
                                         <SelectItem value="gemini">Gemini</SelectItem>
                                         <SelectItem value="deepseek">DeepSeek 官方</SelectItem>
@@ -328,12 +346,13 @@ export function SettingsDialog() {
                     </TabsContent>
 
                     <TabsContent value="diag" className="space-y-4 py-4">
-                        <div className="space-y-2 rounded-xl border bg-card p-3">
+                        <div className="space-y-2 rounded-[20px] border border-black/70 bg-white/50 p-3">
                             <div className="flex items-center justify-between">
                                 <Label>环境检测</Label>
                                 <Button
                                     size="sm"
-                                    variant="secondary"
+                                    variant="outline"
+                                    className="border-black bg-white hover:bg-black hover:text-white"
                                     onClick={handleDetectCapability}
                                     disabled={checkingCapability}
                                 >
@@ -348,7 +367,7 @@ export function SettingsDialog() {
                                 </Button>
                             </div>
                             {capability && (
-                                <div className="space-y-1 text-xs text-muted-foreground">
+                                <div className="space-y-1 text-xs text-foreground/70">
                                     <p>可转写: {capability.capability?.canTranscribe ? "是" : "否"}</p>
                                     <p>本地: {capability.capability?.localReady ? "可用" : "不可用"}（{capability.capability?.localReason || "-"}）</p>
                                     <p>依赖: ffmpeg {capability.capability?.ffmpegReady ? "OK" : "NO"} / ffprobe {capability.capability?.ffprobeReady ? "OK" : "NO"} / yt-dlp {capability.capability?.ytDlpReady ? "OK" : "NO"}</p>
@@ -358,12 +377,13 @@ export function SettingsDialog() {
                             )}
                         </div>
 
-                        <div className="space-y-2 rounded-xl border bg-card p-3">
+                        <div className="space-y-2 rounded-[20px] border border-black/70 bg-white/50 p-3">
                             <div className="flex items-center justify-between">
                                 <Label>火山连通性探测</Label>
                                 <Button
                                     size="sm"
-                                    variant="secondary"
+                                    variant="outline"
+                                    className="border-black bg-white hover:bg-black hover:text-white"
                                     onClick={handleProbeVolc}
                                     disabled={probingVolc}
                                 >
@@ -377,11 +397,11 @@ export function SettingsDialog() {
                                     )}
                                 </Button>
                             </div>
-                            <p className="text-xs text-muted-foreground">
+                            <p className="text-xs text-foreground/70">
                                 只做 WS 握手+最小请求，不跑完整转写。用于快速确认 AppID/Token/ResourceID 是否有效。
                             </p>
                             {volcProbe && (
-                                <div className="space-y-1 text-xs text-muted-foreground">
+                                <div className="space-y-1 text-xs text-foreground/70">
                                     <p>状态: {volcProbe.ok ? "成功" : "失败"} / 模式: {volcProbe.mode || "-"}</p>
                                     <p>资源: {volcProbe.chosenResourceId || "-"}</p>
                                     <p>信息: {volcProbe.message || volcProbe.error || "-"}</p>
@@ -402,10 +422,10 @@ export function SettingsDialog() {
                                 value={appearanceDraft.highlightStyle}
                                 onValueChange={(val: HighlightStyle) => setAppearanceDraft((d) => ({ ...d, highlightStyle: val }))}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger className="border-black bg-white">
                                     <SelectValue />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="border-black bg-canvas">
                                     <SelectItem value="default">默认 (背景色)</SelectItem>
                                     <SelectItem value="underline">下划线</SelectItem>
                                     <SelectItem value="left-border">左侧边框</SelectItem>
@@ -420,10 +440,10 @@ export function SettingsDialog() {
                                 value={appearanceDraft.panelFontFamily}
                                 onValueChange={(val) => setAppearanceDraft((d) => ({ ...d, panelFontFamily: val }))}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger className="border-black bg-white">
                                     <SelectValue placeholder="选择字体" />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="border-black bg-canvas">
                                     {FONT_OPTIONS.map((font) => (
                                         <SelectItem
                                             key={font.value}
@@ -453,10 +473,10 @@ export function SettingsDialog() {
                                 value={appearanceDraft.playerFontFamily}
                                 onValueChange={(val) => setAppearanceDraft((d) => ({ ...d, playerFontFamily: val }))}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger className="border-black bg-white">
                                     <SelectValue placeholder="选择字体" />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="border-black bg-canvas">
                                     {FONT_OPTIONS.map((font) => (
                                         <SelectItem
                                             key={font.value}
@@ -489,10 +509,10 @@ export function SettingsDialog() {
                                     type="checkbox"
                                     checked={blockDraft.useReadableBlocks}
                                     onChange={(e) => setBlockDraft((d) => ({ ...d, useReadableBlocks: e.target.checked }))}
-                                    className="rounded border-border bg-background"
+                                    className="rounded border-black bg-white"
                                 />
                             </div>
-                            <p className="text-xs text-muted-foreground">将细碎的短句智能合并为更适合阅读的长句字幕块。</p>
+                            <p className="text-xs text-foreground/70">将细碎的短句智能合并为更适合阅读的长句字幕块。</p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
@@ -556,10 +576,11 @@ export function SettingsDialog() {
                         </div>
                     </TabsContent>
                 </Tabs>
-                <div className="mt-2 flex items-center justify-end gap-2 border-t pt-3">
+                <div className="mt-2 flex items-center justify-end gap-2 border-t border-black/60 pt-3">
                     <Button
                         variant="outline"
                         size="sm"
+                        className="border-black bg-white hover:bg-black hover:text-white"
                         onClick={() => {
                             setAppearanceDraft({
                                 panelFontFamily: "sans-serif",
@@ -581,7 +602,7 @@ export function SettingsDialog() {
                     >
                         重置字幕设置
                     </Button>
-                    <Button size="sm" onClick={applySubtitleSettings}>
+                    <Button size="sm" className="border border-black bg-black text-neon hover:bg-black/90" onClick={applySubtitleSettings}>
                         应用字幕设置
                     </Button>
                 </div>

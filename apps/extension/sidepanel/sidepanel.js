@@ -71,6 +71,23 @@ function normalizeApiBase(input) {
   }
 }
 
+function isPlaceholderApiBase(base) {
+  return !base || /your-domain\.com/i.test(base);
+}
+
+function inferApiBaseFromUrl(url) {
+  try {
+    const u = new URL(String(url || ""));
+    if (!/^https?:$/i.test(u.protocol)) return "";
+    const isLocal = /^(localhost|127\.0\.0\.1)$/i.test(u.hostname);
+    const isAppPath = u.pathname === "/app" || u.pathname.startsWith("/app/");
+    if (!isLocal && !isAppPath) return "";
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "";
+  }
+}
+
 function normalizeUrl(url) {
   try {
     return new URL(String(url || "")).toString();
@@ -303,9 +320,16 @@ async function enqueuePreprocess(item) {
       };
     }
 
+    if (!data) {
+      return {
+        ok: false,
+        error: `Invalid JSON from /api/jobs/enqueue: ${text.slice(0, 120) || "empty response"}`,
+      };
+    }
+
     return {
-      ok: !!data?.ok,
-      error: data?.error,
+      ok: !!data.ok,
+      error: data.error || "",
       key: data?.key,
       status: data?.job?.status,
       progress: Number(data?.job?.progress || 0),
@@ -314,6 +338,27 @@ async function enqueuePreprocess(item) {
     };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+async function assertJobsApiReachable() {
+  if (!apiBase) return { ok: false, error: "missing api base" };
+  try {
+    const res = await fetch(`${apiBase}/api/jobs/status-batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls: [], targetLang: "auto" }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `无法访问 ${apiBase}/api/jobs/status-batch (HTTP ${res.status}${text ? `: ${text.slice(0, 120)}` : ""})`,
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `无法连接 API 地址：${String(err?.message || err)}` };
   }
 }
 
@@ -422,25 +467,6 @@ function updatePreprocessSummary() {
   stopPollingIfIdle();
 }
 
-function jobBadge(item) {
-  const st = jobByItemId.get(item.id);
-  if (!st) return `<span class="job-badge">未提交</span>`;
-
-  if (st.status === "done") {
-    return `<span class="job-badge done">已完成 ${Math.max(100, st.progress || 100)}%</span>`;
-  }
-  if (st.status === "failed") {
-    return `<span class="job-badge failed">失败</span>`;
-  }
-  if (st.status === "processing") {
-    return `<span class="job-badge processing">处理中 ${Math.max(1, Math.min(99, st.progress || 1))}%</span>`;
-  }
-  if (st.status === "queued") {
-    return `<span class="job-badge queued">排队中</span>`;
-  }
-  return `<span class="job-badge">${st.status}</span>`;
-}
-
 function itemClass(item) {
   const st = jobByItemId.get(item.id);
   if (!st) return "";
@@ -448,6 +474,26 @@ function itemClass(item) {
   if (st.status === "failed") return "item-failed";
   if (st.status === "processing" || st.status === "queued") return "item-processing";
   return "";
+}
+
+function itemStatusLabel(item) {
+  const st = jobByItemId.get(item.id);
+  if (!st) return "SAVED";
+  if (st.status === "done") return "DONE";
+  if (st.status === "failed") return "FAILED";
+  if (st.status === "processing") return "ONGOING";
+  if (st.status === "queued") return "QUEUED";
+  return "SAVED";
+}
+
+function itemStatusFillPercent(item) {
+  const st = jobByItemId.get(item.id);
+  if (!st) return 0;
+  if (st.status === "done") return 100;
+  if (st.status === "failed") return 100;
+  if (st.status === "queued") return 8;
+  if (st.status === "processing") return Math.max(6, Math.min(100, Number(st.progress || 0)));
+  return 0;
 }
 
 function renderTodoList() {
@@ -461,34 +507,39 @@ function renderTodoList() {
       const st = jobByItemId.get(item.id);
       const progressWidth = st ? Math.max(0, Math.min(100, Number(st.progress || 0))) : 0;
       return `
-      <div class="item ${itemClass(item)}" data-id="${item.id}">
-        <div class="item-head">
-          <div class="item-title">${truncate(item.title || hostOf(item.url), 80)}</div>
-          ${jobBadge(item)}
+      <div class="item-grid ${itemClass(item)}" data-id="${item.id}">
+        <div class="grid-label-cell ${itemClass(item)}">
+          <div class="grid-label-fill" style="height:${Math.max(0, Math.min(100, itemStatusFillPercent(item)))}%"></div>
+          <span class="grid-label-text">${itemStatusLabel(item)}</span>
         </div>
-        <div class="item-url">${truncate(item.url, 120)}</div>
-        <div class="item-meta">${formatTime(item.createdAt)} · 源: ${item.sourceLang || "auto"} · 目标: ${item.targetLang || "auto"}</div>
-        <div class="item-actions">
-          <button class="btn btn-primary js-open-app">在 /app 打开</button>
-          <button class="btn btn-secondary js-open-src">打开原页</button>
-          <button class="btn btn-danger js-delete">删除</button>
-        </div>
-        <div class="item-lang-row">
-          <div class="lang-field">
-            <span class="lang-label">源语言</span>
-            <select class="lang-select js-source-lang" title="源语言">${langOptionsHtml(item.sourceLang || "auto")}</select>
+        <div class="grid-content-cell">
+          <div class="item-head">
+            <div class="item-title">${truncate(item.title || hostOf(item.url), 80)}</div>
           </div>
-          <div class="lang-field">
-            <span class="lang-label">目标语言</span>
-            <select class="lang-select js-target-lang" title="目标语言">${langOptionsHtml(item.targetLang || "auto")}</select>
+          <div class="item-url">${truncate(item.url, 120)}</div>
+          <div class="item-meta">${formatTime(item.createdAt)} · 源: ${item.sourceLang || "auto"} · 目标: ${item.targetLang || "auto"}</div>
+          <div class="item-actions">
+            <button class="btn btn-primary js-open-app">在 /app 打开</button>
+            <button class="btn btn-secondary js-open-src">打开原页</button>
+            <button class="btn btn-danger js-delete">删除</button>
           </div>
+          <div class="item-lang-row">
+            <div class="lang-field">
+              <span class="lang-label">源语言</span>
+              <select class="lang-select js-source-lang" title="源语言">${langOptionsHtml(item.sourceLang || "auto")}</select>
+            </div>
+            <div class="lang-field">
+              <span class="lang-label">目标语言</span>
+              <select class="lang-select js-target-lang" title="目标语言">${langOptionsHtml(item.targetLang || "auto")}</select>
+            </div>
+          </div>
+          <div class="item-export">
+            <select class="lang-select js-export-format" title="导出格式">${exportOptionsHtml(item.exportFormat || "srt")}</select>
+            <button class="btn btn-secondary js-export">导出</button>
+          </div>
+          ${st ? `<div class="item-progress"><div class="item-progress-bar" style="width:${progressWidth}%"></div></div>` : ""}
+          ${st?.message ? `<div class="item-job-msg">${truncate(st.message, 120)}${st.error ? ` · ${truncate(st.error, 80)}` : ""}</div>` : ""}
         </div>
-        <div class="item-export">
-          <select class="lang-select js-export-format" title="导出格式">${exportOptionsHtml(item.exportFormat || "srt")}</select>
-          <button class="btn btn-secondary js-export">导出</button>
-        </div>
-        ${st ? `<div class="item-progress"><div class="item-progress-bar" style="width:${progressWidth}%"></div></div>` : ""}
-        ${st?.message ? `<div class="item-job-msg">${truncate(st.message, 120)}${st.error ? ` · ${truncate(st.error, 80)}` : ""}</div>` : ""}
       </div>
     `;
     })
@@ -500,6 +551,17 @@ async function loadState() {
     chrome.runtime.sendMessage({ type: "GET_API_BASE" }, resolve);
   });
   apiBase = normalizeApiBase(apiRes?.apiBase);
+  if (isPlaceholderApiBase(apiBase)) {
+    const pageUrl = await getPageUrl();
+    const inferred = inferApiBaseFromUrl(pageUrl);
+    if (inferred) {
+      apiBase = inferred;
+      await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "SET_API_BASE", apiBase: inferred }, resolve);
+      });
+      setStatus("active", `已自动识别 API 地址：${inferred}`);
+    }
+  }
   apiBaseInput.value = apiBase;
 
   const todoStorage = await readFromStorage(TODO_KEY);
@@ -517,7 +579,11 @@ async function loadState() {
 
   renderTodoList();
   updatePreprocessSummary();
-  setStatus("active", browserSettings ? `就绪（ASR: ${currentAsrLabel()}）` : "就绪（未同步浏览器设置）");
+  if (!apiBase) {
+    setStatus("error", "未配置 API 地址。请在 /app 页面点击“同步浏览器设置”自动识别，或手动填写。");
+  } else {
+    setStatus("active", browserSettings ? `就绪（ASR: ${currentAsrLabel()}）` : "就绪（未同步浏览器设置）");
+  }
 }
 
 async function syncBrowserSettings() {
@@ -550,6 +616,17 @@ async function syncBrowserSettings() {
     source: res.source || "active-tab",
   };
   await writeToStorage({ [BROWSER_SETTINGS_KEY]: browserSettings });
+
+  if (isPlaceholderApiBase(apiBase)) {
+    const inferred = inferApiBaseFromUrl(res.tabUrl || "");
+    if (inferred) {
+      await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "SET_API_BASE", apiBase: inferred }, resolve);
+      });
+      apiBase = inferred;
+      apiBaseInput.value = inferred;
+    }
+  }
 
   setStatus("active", `已同步浏览器设置（ASR: ${currentAsrLabel()}）`);
 }
@@ -609,6 +686,11 @@ preprocessAllBtn?.addEventListener("click", async () => {
     setStatus("error", "当前 ASR 配置不完整，请检查浏览器设置后重试");
     return;
   }
+  const reachable = await assertJobsApiReachable();
+  if (!reachable.ok) {
+    setStatus("error", reachable.error || "API 不可用");
+    return;
+  }
 
   let submitted = 0;
   let skipped = 0;
@@ -639,13 +721,13 @@ preprocessAllBtn?.addEventListener("click", async () => {
       });
     } else {
       failed += 1;
-      if (!firstError) firstError = r.error || "unknown";
+      if (!firstError) firstError = r.error || "提交失败";
       jobByItemId.set(item.id, {
         status: "failed",
         progress: 0,
         step: "failed",
         message: "提交失败",
-        error: r.error || "unknown",
+        error: r.error || "提交失败",
       });
     }
   }
@@ -723,7 +805,7 @@ todoList.addEventListener("change", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
 
-  const card = target.closest(".item");
+  const card = target.closest(".item-grid");
   const id = card?.getAttribute("data-id");
   if (!id) return;
   const idx = todoItems.findIndex((x) => x.id === id);
@@ -757,7 +839,7 @@ todoList.addEventListener("click", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
 
-  const card = target.closest(".item");
+  const card = target.closest(".item-grid");
   const id = card?.getAttribute("data-id");
   if (!id) return;
   const item = todoItems.find((x) => x.id === id);
@@ -821,3 +903,41 @@ loadState().then(() => {
 }).catch((err) => {
   setStatus("error", err?.message || "初始化失败");
 });
+
+// Sidebar vertical navigation (layout only, no business logic changes).
+const COLLAPSIBLE_PANELS = ["panel-status", "panel-api", "panel-actions", "todoList"];
+
+function applyPanelVisibility() {
+  const activeTargets = new Set(
+    Array.from(document.querySelectorAll(".vertical-nav.active[data-nav-target]"))
+      .map((btn) => btn.getAttribute("data-nav-target"))
+      .filter(Boolean),
+  );
+  COLLAPSIBLE_PANELS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = activeTargets.has(id) ? "" : "none";
+  });
+}
+
+document.querySelectorAll(".vertical-nav[data-nav-target]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const targetId = btn.getAttribute("data-nav-target");
+    if (!targetId) return;
+    const currentlyActive = btn.classList.contains("active");
+    const activeCount = document.querySelectorAll(".vertical-nav.active[data-nav-target]").length;
+    // Keep at least one panel visible.
+    if (currentlyActive && activeCount <= 1) return;
+
+    btn.classList.toggle("active");
+    applyPanelVisibility();
+
+    if (!currentlyActive) {
+      const el = document.getElementById(targetId);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+});
+
+// Initial multi-panel visibility from .active buttons.
+applyPanelVisibility();

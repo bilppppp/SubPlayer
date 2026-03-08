@@ -12,6 +12,32 @@ import { Maximize, Minimize } from "lucide-react";
 import type { Segment, ReadableBlock, SubtitleMode } from "@/types";
 import { useSettings } from "@/store/settings";
 
+interface YouTubePlayer {
+  seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
+  playVideo: () => void;
+  getCurrentTime: () => number;
+  destroy: () => void;
+}
+
+interface YouTubePlayerOptions {
+  videoId: string;
+  playerVars?: Record<string, number>;
+  events?: {
+    onReady?: () => void;
+  };
+}
+
+interface YouTubeNamespace {
+  Player: new (elementId: string, options: YouTubePlayerOptions) => YouTubePlayer;
+}
+
+declare global {
+  interface Window {
+    onYouTubeIframeAPIReady?: () => void;
+    YT?: YouTubeNamespace;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Types
 // ═══════════════════════════════════════════════════════════════════════
@@ -48,7 +74,7 @@ function loadYouTubeApi(): Promise<void> {
 
   ytApiPromise = new Promise<void>((resolve) => {
     // The API calls this global callback when ready
-    (window as any).onYouTubeIframeAPIReady = () => {
+    window.onYouTubeIframeAPIReady = () => {
       ytApiLoaded = true;
       resolve();
     };
@@ -68,7 +94,7 @@ function loadYouTubeApi(): Promise<void> {
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   function VideoPlayer(
-    { src, youtubeId, activeSegment, activeIndex = -1, subtitleMode = "bilingual", readableBlocks },
+    { src, youtubeId, activeSegment, activeIndex = -1, subtitleMode = "bilingual" },
     ref
   ) {
     // ── Container & UI ref ───────────────────────────────────────
@@ -80,8 +106,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
     // ── YouTube player ref ───────────────────────────────────────
     const ytContainerRef = useRef<HTMLDivElement>(null);
-    const ytPlayerRef = useRef<any>(null);
-    const [ytReady, setYtReady] = useState(false);
+    const ytPlayerRef = useRef<YouTubePlayer | null>(null);
 
     // ── Settings ─────────────────────────────────────────────────
     const settings = useSettings();
@@ -128,7 +153,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     useEffect(() => {
       if (mode !== "youtube" || !youtubeId) return;
 
-      let player: any = null;
+      let player: YouTubePlayer | null = null;
       let destroyed = false;
 
       const initPlayer = async () => {
@@ -145,7 +170,10 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         playerDiv.id = `yt-player-${Date.now()}`;
         container.appendChild(playerDiv);
 
-        player = new (window as any).YT.Player(playerDiv.id, {
+        const yt = window.YT;
+        if (!yt?.Player) return;
+
+        player = new yt.Player(playerDiv.id, {
           videoId: youtubeId,
           playerVars: {
             autoplay: 0,
@@ -160,7 +188,6 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             onReady: () => {
               if (!destroyed) {
                 ytPlayerRef.current = player;
-                setYtReady(true);
               }
             },
           },
@@ -171,7 +198,6 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       return () => {
         destroyed = true;
-        setYtReady(false);
         if (player?.destroy) {
           try {
             player.destroy();
@@ -209,7 +235,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     return (
       <div
         ref={containerRef}
-        className={`relative overflow-hidden bg-black group flex flex-col justify-center ${isFullscreen ? "w-full h-full object-contain" : "rounded-xl shadow-2xl shadow-black/20 aspect-video w-full"
+        className={`group relative flex flex-col justify-center overflow-hidden border-2 border-black bg-[#050505] ${isFullscreen ? "h-full w-full object-contain" : "aspect-video w-full rounded-[30px]"
           }`}
       >
         {/* ── YouTube embed ──────────────────────────────────────── */}
@@ -237,9 +263,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
         {/* ── Placeholder ───────────────────────────────────────── */}
         {mode === "placeholder" && (
-          <div className="flex aspect-video w-full items-center justify-center bg-gradient-to-br from-zinc-900 to-zinc-800">
-            <div className="flex flex-col items-center gap-3 text-zinc-500">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-zinc-700">
+          <div className="flex aspect-video w-full items-center justify-center bg-[#050505]">
+            <div className="flex flex-col items-center gap-3 text-white/55">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-white/30">
                 <svg
                   className="h-8 w-8"
                   fill="none"
@@ -270,7 +296,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           <div className="absolute top-4 right-4 z-[60] opacity-0 transition-opacity duration-300 group-hover:opacity-100">
             <button
               onClick={toggleFullscreen}
-              className="rounded-lg bg-black/50 hover:bg-black/70 p-2 text-white backdrop-blur-md transition-colors"
+              className="rounded-xl border border-white/30 bg-black/65 p-2 text-white transition-colors hover:bg-black/85"
               title="全屏播放"
             >
               {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
@@ -287,19 +313,20 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2 }}
-              className="pointer-events-none absolute bottom-14 left-0 right-0 z-50 flex flex-col items-center gap-0.5 px-4"
+              className="pointer-events-none absolute bottom-14 left-0 right-0 z-50 flex flex-col items-center gap-1 px-4"
             >
               {/* Original text line */}
               {(subtitleMode === "bilingual" || subtitleMode === "original") && !!overlayOriginalText && (
                 <span
-                  className="max-w-[82vw] lg:max-w-[70vw] rounded-lg bg-black/75 px-4 py-1.5 text-center font-medium text-white backdrop-blur-md break-words"
+                  className="max-w-[82vw] lg:max-w-[70vw] rounded-2xl border border-white/20 bg-black/88 px-4 py-1.5 text-center font-medium text-white break-words"
                   style={{
                     fontFamily: settings.playerFontFamily,
                     fontSize: settings.playerFontSize || "1rem",
                     display: "-webkit-box",
                     WebkitBoxOrient: "vertical",
-                    WebkitLineClamp: 2,
+                    WebkitLineClamp: 3,
                     overflow: "hidden",
+                    maxHeight: "8.2em",
                   }}
                 >
                   {overlayOriginalText}
@@ -314,8 +341,8 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                     transition={{ delay: subtitleMode === "bilingual" ? 0.1 : 0 }}
                     className={
                       subtitleMode === "translation"
-                        ? "max-w-[82vw] lg:max-w-[70vw] rounded-lg bg-black/75 px-4 py-1.5 text-center font-medium text-white backdrop-blur-md break-words"
-                        : "max-w-[82vw] lg:max-w-[70vw] rounded-lg bg-black/60 px-3 py-1 text-center text-amber-300 backdrop-blur-md break-words"
+                        ? "max-w-[82vw] lg:max-w-[70vw] rounded-2xl border border-white/20 bg-black/88 px-4 py-1.5 text-center font-medium text-white break-words"
+                        : "max-w-[82vw] lg:max-w-[70vw] rounded-2xl border border-[#ccff00]/45 bg-black/76 px-3 py-1 text-center text-[#ccff00] break-words"
                     }
                     style={{
                       fontFamily: settings.playerFontFamily,
@@ -324,8 +351,9 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                         : settings.playerFontSize || "1rem",
                       display: "-webkit-box",
                       WebkitBoxOrient: "vertical",
-                      WebkitLineClamp: 2,
+                      WebkitLineClamp: 3,
                       overflow: "hidden",
+                      maxHeight: "8.2em",
                     }}
                   >
                     {overlayTranslationText}

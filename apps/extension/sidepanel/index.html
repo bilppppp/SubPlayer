@@ -6,29 +6,43 @@
   <title>SubPlayer Helper</title>
   <style>
     :root {
-      --bg: #0a0a0b;
-      --card: #141416;
-      --border: rgba(255,255,255,0.08);
-      --text: #f5f5f7;
-      --text-muted: #8e8e93;
-      --indigo: #6366f1;
-      --purple: #a855f7;
-      --error: #ef4444;
-      --success: #22c55e;
-      --warn: #f59e0b;
+      --bg-canvas: #e8e8e8;
+      --bg-void: #050505;
+      --accent-neon: #ccff00;
+      --card: rgba(255, 255, 255, 0.52);
+      --border: rgba(5, 5, 5, 0.68);
+      --text: #050505;
+      --text-muted: rgba(5, 5, 5, 0.6);
+      --error: #dc2626;
+      --success: #16a34a;
+      --warn: #d97706;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-canvas);
       color: var(--text);
       font-size: 13px;
       line-height: 1.5;
       height: 100vh;
+      overflow: hidden;
+    }
+
+    .app-container {
+      display: grid;
+      grid-template-columns: 1fr 40px;
+      height: 100%;
+      border-left: 1px solid var(--border);
+      border-top: 1px solid var(--border);
+    }
+
+    .main-content {
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--border);
     }
 
     .header {
@@ -38,21 +52,40 @@
       padding: 12px 16px;
       border-bottom: 1px solid var(--border);
       background: var(--card);
+      backdrop-filter: blur(6px);
     }
     .logo {
       width: 24px; height: 24px;
-      background: linear-gradient(135deg, var(--indigo), var(--purple));
-      border-radius: 6px;
+      background: var(--bg-void);
+      border: 1px solid var(--bg-void);
+      border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      color: white;
+      color: var(--accent-neon);
       font-size: 12px;
       font-weight: 700;
     }
-    .header h1 { font-size: 14px; font-weight: 600; }
+    .header h1 {
+      font-size: 13px;
+      font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-weight: 700;
+    }
 
-    .status-bar {
-      padding: 10px 16px;
+    .status-grid {
+      display: grid;
+      grid-template-columns: 34px 1fr;
       border-bottom: 1px solid var(--border);
+      background: var(--card);
+    }
+    .status-main {
+      padding: 8px 16px;
+    }
+    .status-bar {
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.7);
+      border-radius: 8px;
+      padding: 7px 10px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -66,34 +99,35 @@
     .status-dot.error { background: var(--error); }
 
     .preprocess-summary {
-      margin: 8px 16px 0;
+      margin: 8px 0 0;
       padding: 8px 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
       color: var(--text-muted);
       font-size: 12px;
-      background: rgba(255,255,255,0.03);
+      background: rgba(255,255,255,0.7);
     }
     .preprocess-summary.active {
-      border-color: rgba(99,102,241,.45);
-      color: #c7d2fe;
-      background: rgba(99,102,241,.12);
+      border-color: rgba(5,5,5,.6);
+      color: #4d5a00;
+      background: rgba(204,255,0,.18);
     }
     .preprocess-summary.done {
-      border-color: rgba(34,197,94,.45);
-      color: #bbf7d0;
-      background: rgba(34,197,94,.12);
+      border-color: rgba(22,163,74,.45);
+      color: #166534;
+      background: rgba(22,163,74,.1);
     }
     .preprocess-summary.error {
-      border-color: rgba(239,68,68,.45);
-      color: #fecaca;
-      background: rgba(239,68,68,.12);
+      border-color: rgba(220,38,38,.45);
+      color: #991b1b;
+      background: rgba(220,38,38,.1);
     }
     .hidden { display: none; }
 
     .section {
       padding: 12px 16px;
       border-bottom: 1px solid var(--border);
+      background: var(--card);
     }
     .section h2 {
       font-size: 12px;
@@ -101,10 +135,46 @@
       font-weight: 600;
       margin-bottom: 8px;
       text-transform: uppercase;
-      letter-spacing: .04em;
+      letter-spacing: .08em;
+      font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
-    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .section-grid {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+    }
+
+    .section-grid:last-of-type {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-label-cell {
+      border-right: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,.45);
+      padding: 8px 0;
+    }
+
+    .section-label-text {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      line-height: 1;
+    }
+
+    .section-main {
+      padding: 12px 16px;
+    }
+
+    .row { display: grid; gap: 6px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
     .btn {
       display: inline-flex; align-items: center; justify-content: center;
@@ -117,15 +187,27 @@
       cursor: pointer;
       transition: all .15s;
       white-space: nowrap;
+      min-height: 32px;
     }
     .btn:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-primary { background: linear-gradient(135deg, var(--indigo), var(--purple)); color: #fff; }
-    .btn-secondary { background: rgba(255,255,255,.06); border: 1px solid var(--border); color: var(--text); }
-    .btn-danger { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.4); color: #fecaca; }
+    .btn-primary { background: var(--bg-void); border: 1px solid var(--bg-void); color: var(--accent-neon); }
+    .btn-secondary { background: rgba(255,255,255,.45); border: 1px solid var(--border); color: var(--text); }
+    .btn-danger { background: rgba(220,38,38,.08); border: 1px solid rgba(220,38,38,.4); color: #991b1b; }
+    .btn:hover { filter: brightness(.97); }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .row .btn-primary {
+      grid-column: span 2;
+    }
 
     .input {
       width: 100%;
-      background: rgba(255,255,255,.04);
+      background: rgba(255,255,255,.75);
       border: 1px solid var(--border);
       color: var(--text);
       border-radius: 8px;
@@ -138,17 +220,73 @@
       flex: 1;
       overflow-y: auto;
       padding: 8px;
+      background: rgba(255,255,255,.2);
     }
-    .item {
+    .item-grid {
+      display: grid;
+      grid-template-columns: 34px 1fr;
       border: 1px solid var(--border);
       border-radius: 10px;
       background: var(--card);
-      padding: 8px;
       margin-bottom: 8px;
+      overflow: hidden;
     }
-    .item.item-processing { border-color: rgba(99,102,241,.45); }
-    .item.item-done { border-color: rgba(34,197,94,.45); }
-    .item.item-failed { border-color: rgba(239,68,68,.45); }
+
+    .grid-label-cell {
+      border-right: 1px solid var(--border);
+      background: rgba(255,255,255,.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .grid-label-fill {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+      height: 0;
+      background: rgba(5,5,5,.12);
+      transition: height .25s ease;
+      z-index: 0;
+    }
+
+    .grid-label-cell.item-processing .grid-label-fill {
+      background: rgba(204,255,0,.45);
+    }
+    .grid-label-cell.item-done .grid-label-fill {
+      background: rgba(22,163,74,.25);
+    }
+    .grid-label-cell.item-failed .grid-label-fill {
+      background: rgba(220,38,38,.18);
+    }
+
+    .grid-label-text {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      line-height: 1;
+      z-index: 1;
+      position: relative;
+    }
+
+    .grid-content-cell {
+      padding: 8px;
+    }
+
+    .item-grid.item-processing { border-color: rgba(5,5,5,.68); box-shadow: inset 0 0 0 1px rgba(204,255,0,.45); }
+    .item-grid.item-done { border-color: rgba(22,163,74,.55); }
+    .item-grid.item-failed { border-color: rgba(220,38,38,.55); }
+    .item-grid.item-processing .grid-label-text { color: #556300; }
+    .item-grid.item-done .grid-label-text { color: #166534; }
+    .item-grid.item-failed .grid-label-text { color: #991b1b; }
 
     .item-head {
       display: flex;
@@ -166,20 +304,6 @@
       white-space: nowrap;
       min-width: 0;
     }
-
-    .job-badge {
-      font-size: 10px;
-      color: var(--text-muted);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 2px 8px;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-    .job-badge.processing { color: #c7d2fe; border-color: rgba(99,102,241,.45); }
-    .job-badge.done { color: #bbf7d0; border-color: rgba(34,197,94,.45); }
-    .job-badge.failed { color: #fecaca; border-color: rgba(239,68,68,.45); }
-    .job-badge.queued { color: #fde68a; border-color: rgba(245,158,11,.45); }
 
     .item-url {
       font-size: 11px;
@@ -233,7 +357,7 @@
 
     .lang-select {
       width: 100%;
-      background: rgba(255,255,255,.06);
+      background: rgba(255,255,255,.75);
       border: 1px solid var(--border);
       color: var(--text);
       border-radius: 8px;
@@ -252,7 +376,7 @@
     }
     .item-progress-bar {
       height: 100%;
-      background: linear-gradient(90deg, var(--indigo), var(--purple));
+      background: linear-gradient(90deg, var(--bg-void), var(--accent-neon));
     }
 
     .item-job-msg {
@@ -271,44 +395,121 @@
       font-size: 12px;
     }
 
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      background: rgba(255,255,255,.25);
+    }
+
+    .sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .vertical-nav {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.55);
+      color: var(--text-muted);
+      border-radius: 999px;
+      font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding: 10px 4px;
+      cursor: pointer;
+    }
+    .vertical-nav.active {
+      background: var(--bg-void);
+      color: var(--accent-neon);
+      border-color: var(--bg-void);
+    }
+
+    @media (max-width: 360px) {
+      .app-container { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .status-grid { grid-template-columns: 1fr; }
+      .section-grid { grid-template-columns: 1fr; }
+      .status-grid .section-label-cell { display: none; }
+      .section-label-cell { display: none; }
+      .row { grid-template-columns: 1fr; }
+      .row .btn-primary { grid-column: auto; }
+    }
+
     ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb { background: rgba(5,5,5,.2); border-radius: 2px; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="logo">SP</div>
-    <h1>SubPlayer Helper</h1>
+  <div class="app-container">
+    <main class="main-content">
+      <div class="header" id="panel-header">
+        <div class="logo">SP</div>
+        <h1>SubPlayer Helper</h1>
+      </div>
+
+      <div class="status-grid" id="panel-status">
+        <div class="section-label-cell">
+          <span class="section-label-text">Stat</span>
+        </div>
+        <div class="status-main">
+          <div class="status-bar">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText" style="color: var(--text-muted); font-size: 12px;">就绪</span>
+          </div>
+          <div id="preprocessSummary" class="preprocess-summary hidden"></div>
+        </div>
+      </div>
+
+      <div class="section-grid" id="panel-api">
+        <div class="section-label-cell">
+          <span class="section-label-text">Api</span>
+        </div>
+        <div class="section-main">
+          <h2>API</h2>
+          <input id="apiBaseInput" class="input" placeholder="https://your-domain.com" />
+          <div class="row">
+            <button id="saveApiBtn" class="btn btn-secondary">保存 API 地址</button>
+            <button id="syncBrowserBtn" class="btn btn-secondary">同步浏览器设置</button>
+            <button id="openAppBtn" class="btn btn-primary">在 /app 打开</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-grid" id="panel-actions">
+        <div class="section-label-cell">
+          <span class="section-label-text">Task</span>
+        </div>
+        <div class="section-main">
+          <h2>当前页面</h2>
+          <div class="row">
+            <button id="saveCurrentBtn" class="btn btn-primary">保存当前链接</button>
+            <button id="openQueueBtn" class="btn btn-secondary">播放列表模式</button>
+            <button id="preprocessAllBtn" class="btn btn-secondary">处理视频列表</button>
+            <button id="clearBtn" class="btn btn-danger">清空记录</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="list" id="todoList"></div>
+    </main>
+
+    <aside class="sidebar">
+      <div class="sidebar-nav">
+        <button class="vertical-nav active" data-nav-target="panel-status">追踪</button>
+        <button class="vertical-nav active" data-nav-target="panel-api">API</button>
+        <button class="vertical-nav active" data-nav-target="panel-actions">任务</button>
+        <button class="vertical-nav active" data-nav-target="todoList">列表</button>
+      </div>
+    </aside>
   </div>
-
-  <div class="status-bar">
-    <div class="status-dot" id="statusDot"></div>
-    <span id="statusText" style="color: var(--text-muted); font-size: 12px;">就绪</span>
-  </div>
-
-  <div id="preprocessSummary" class="preprocess-summary hidden"></div>
-
-  <div class="section">
-    <h2>API</h2>
-    <input id="apiBaseInput" class="input" placeholder="https://your-domain.com" />
-    <div class="row">
-      <button id="saveApiBtn" class="btn btn-secondary">保存 API 地址</button>
-      <button id="syncBrowserBtn" class="btn btn-secondary">同步浏览器设置</button>
-      <button id="openAppBtn" class="btn btn-primary">在 /app 打开</button>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>当前页面</h2>
-    <div class="row">
-      <button id="saveCurrentBtn" class="btn btn-primary">保存当前链接</button>
-      <button id="openQueueBtn" class="btn btn-secondary">播放列表模式</button>
-      <button id="preprocessAllBtn" class="btn btn-secondary">处理视频列表</button>
-      <button id="clearBtn" class="btn btn-danger">清空记录</button>
-    </div>
-  </div>
-
-  <div class="list" id="todoList"></div>
 
   <script src="sidepanel.js"></script>
 </body>

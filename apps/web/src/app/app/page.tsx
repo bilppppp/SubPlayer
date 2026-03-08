@@ -21,7 +21,7 @@ import { useSubtitleSync } from "@/hooks/use-subtitle-sync";
 import { getPreprocessResult, transcribeFile, transcribeUrl, transcribeUrlLive, translateSegments, prepareVideo, prepareVideoDirect } from "@/lib/api";
 import { generateReadableBlocks, type ResegmentOptions } from "@/lib/resegment";
 import { useSettings } from "@/store/settings";
-import type { MediaInput, Segment, ReadableBlock, SubtitleMode, TaskState } from "@/types";
+import type { MediaInput, Segment, SubtitleMode, TaskState } from "@/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -272,6 +272,22 @@ export default function AppPage() {
     host?: string;
     score?: number;
     headers?: { referer?: string; origin?: string; userAgent?: string; cookie?: string };
+  };
+
+  type CaptureResult = {
+    ok: boolean;
+    mediaUrl?: string;
+    kind?: "hls" | "dash" | "mp4" | "unknown";
+    candidates?: CaptureCandidate[];
+    headers?: { referer?: string; origin?: string; userAgent?: string; cookie?: string };
+    error?: string;
+  };
+
+  type BrowserRuntime = {
+    sendMessage: (
+      payload: { type: "CAPTURE_MEDIA_ONCE"; pageUrl: string; timeoutMs: number },
+      callback: (response: CaptureResult) => void,
+    ) => void;
   };
 
   // ── state ───────────────────────────────────────────────────────
@@ -532,7 +548,9 @@ export default function AppPage() {
                 // active tab, then hand it to /api/video/prepare-direct.
                 let recovered = false;
                 try {
-                  const runtime = (globalThis as any)?.chrome?.runtime;
+                  const runtime = (
+                    globalThis as { chrome?: { runtime?: BrowserRuntime } }
+                  ).chrome?.runtime;
                   setTask({
                     phase: "downloading",
                     progress: 18,
@@ -541,14 +559,18 @@ export default function AppPage() {
                   await waitIfPaused();
 
                   const captureViaWindowBridge = () =>
-                    new Promise<any>((resolve) => {
+                    new Promise<CaptureResult>((resolve) => {
                       const reqId = `cap_${Date.now()}_${Math.random().toString(36).slice(2)}`;
                       const onMessage = (ev: MessageEvent) => {
-                        const data = ev.data;
+                        const data = ev.data as {
+                          type?: string;
+                          requestId?: string;
+                          result?: CaptureResult;
+                        };
                         if (!data || data.type !== "SUBPLAYER_CAPTURE_MEDIA_ONCE_RESULT") return;
                         if (data.requestId !== reqId) return;
                         window.removeEventListener("message", onMessage);
-                        resolve(data.result);
+                        resolve(data.result ?? { ok: false, error: "bridge-empty-result" });
                       };
                       window.addEventListener("message", onMessage);
                       window.postMessage(
@@ -567,14 +589,14 @@ export default function AppPage() {
                     });
 
                   const captureRes = runtime?.sendMessage
-                    ? await new Promise<any>((resolve) => {
+                    ? await new Promise<CaptureResult>((resolve) => {
                       runtime.sendMessage(
                         {
                           type: "CAPTURE_MEDIA_ONCE",
                           pageUrl: u,
                           timeoutMs: 15000,
                         },
-                        resolve,
+                        (result) => resolve(result ?? { ok: false, error: "runtime-empty-result" }),
                       );
                     })
                     : await captureViaWindowBridge();
@@ -1061,7 +1083,7 @@ export default function AppPage() {
         }
       }
     },
-    [asrProvider, clearCheckpoint, playlistUrls, readCheckpoint, setTracksFromAligned, volcengineMode, writeCheckpoint],
+    [allowAsrAutoDowngrade, asrProvider, clearCheckpoint, playlistUrls, readCheckpoint, setTracksFromAligned, volcengineMode, writeCheckpoint],
   );
 
   const retryWithSelectedCapture = useCallback(() => {
@@ -1152,20 +1174,20 @@ export default function AppPage() {
   // ── Initial landing ────────────────────────────────────────────
   if (!hasStarted) {
     return (
-      <div className="flex h-dvh flex-col bg-background text-foreground">
-        <Header />
+      <div className="retro-app flex h-dvh flex-col">
+        <Header variant="retro" />
         <main className="flex flex-1 items-center justify-center p-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="w-full max-w-xl"
+            className="inverted-corner retro-card w-full max-w-xl p-6"
           >
             <div className="mb-8 text-center">
-              <h2 className="text-2xl font-bold tracking-tight">
+              <h2 className="text-2xl font-bold tracking-tight text-void">
                 视频字幕识别 & 翻译
               </h2>
-              <p className="mt-2 text-sm text-muted-foreground">
+              <p className="mt-2 text-sm text-void/70">
                 上传视频/音频文件或粘贴链接，自动生成带时间轴的双语字幕
               </p>
             </div>
@@ -1178,8 +1200,8 @@ export default function AppPage() {
 
   // ── Working view ───────────────────────────────────────────────
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <Header />
+    <div className="retro-app flex h-dvh flex-col overflow-hidden">
+      <Header variant="retro" />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* ── Left: Video + Controls ────────────────────────────── */}
@@ -1204,39 +1226,39 @@ export default function AppPage() {
           </AnimatePresence>
           <TaskProgress {...task} />
           {isProcessing && (
-            <div className="flex items-center gap-2 rounded-md border border-border bg-card p-2">
-              <Button size="sm" variant="secondary" onClick={togglePausePipeline}>
+            <div className="retro-card flex items-center gap-2 rounded-2xl p-2">
+              <Button size="sm" variant="outline" className="border-black bg-white hover:bg-black hover:text-white" onClick={togglePausePipeline}>
                 {isPaused ? <Play className="mr-1.5 h-3.5 w-3.5" /> : <Pause className="mr-1.5 h-3.5 w-3.5" />}
                 {isPaused ? "继续" : "暂停"}
               </Button>
-              <Button size="sm" variant="destructive" onClick={stopPipeline}>
+              <Button size="sm" variant="outline" className="border-black bg-black text-neon hover:bg-black/90" onClick={stopPipeline}>
                 <Square className="mr-1.5 h-3.5 w-3.5" />
                 停止
               </Button>
-              <span className="ml-auto text-xs text-muted-foreground">
+              <span className="ml-auto font-mono text-xs uppercase tracking-wide text-void/65">
                 {isPaused ? "已暂停（当前子任务完成后生效）" : "处理中"}
               </span>
             </div>
           )}
           {!isProcessing && task.phase === "idle" && pendingInput?.type === "url" && resumableInfo && (
-            <div className="flex items-center gap-2 rounded-md border border-border bg-card p-2">
-              <span className="text-xs text-muted-foreground">
+            <div className="retro-card flex items-center gap-2 rounded-2xl p-2">
+              <span className="font-mono text-xs uppercase tracking-wide text-void/65">
                 可继续: {resumableInfo.next}/{resumableInfo.total}
               </span>
-              <Button size="sm" variant="secondary" onClick={() => runPipeline(pendingInput, pendingLanguage, pendingTargetLang)}>
+              <Button size="sm" variant="outline" className="border-black bg-white hover:bg-black hover:text-white" onClick={() => runPipeline(pendingInput, pendingLanguage, pendingTargetLang)}>
                 <Play className="mr-1.5 h-3.5 w-3.5" />
                 继续上次进度
               </Button>
             </div>
           )}
           {playlistUrls.length > 0 && (
-            <div className="rounded-md border border-border bg-card p-3">
+            <div className="retro-card rounded-2xl p-3">
               <div className="mb-2 flex items-center gap-2">
-                <ListVideo className="h-4 w-4 text-muted-foreground" />
-                <p className="text-sm font-medium">
+                <ListVideo className="h-4 w-4 text-void/60" />
+                <p className="text-sm font-medium text-void">
                   播放列表 {playlistIndex + 1}/{playlistUrls.length}
                 </p>
-                <label className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
+                <label className="ml-auto flex items-center gap-1 font-mono text-xs uppercase tracking-wide text-void/65">
                   <input
                     type="checkbox"
                     checked={autoNext}
@@ -1248,7 +1270,8 @@ export default function AppPage() {
               <div className="mb-2 flex items-center gap-2">
                 <Button
                   size="sm"
-                  variant="secondary"
+                  variant="outline"
+                  className="border-black bg-white hover:bg-black hover:text-white"
                   disabled={playlistIndex <= 0}
                   onClick={() => startPlaylistItem(playlistIndex - 1)}
                 >
@@ -1257,7 +1280,8 @@ export default function AppPage() {
                 </Button>
                 <Button
                   size="sm"
-                  variant="secondary"
+                  variant="outline"
+                  className="border-black bg-white hover:bg-black hover:text-white"
                   disabled={playlistIndex >= playlistUrls.length - 1}
                   onClick={() => startPlaylistItem(playlistIndex + 1)}
                 >
@@ -1266,7 +1290,7 @@ export default function AppPage() {
                 </Button>
               </div>
               <select
-                className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
+                className="w-full rounded-xl border border-black/70 bg-white px-2 py-1 font-mono text-xs text-void"
                 value={String(playlistIndex)}
                 onChange={(e) => startPlaylistItem(Number(e.target.value))}
               >
@@ -1279,13 +1303,13 @@ export default function AppPage() {
             </div>
           )}
           {captureCandidates.length > 0 && (
-            <div className="rounded-md border border-border bg-card p-3">
-              <p className="mb-2 text-sm font-medium">手动选择视频流</p>
-              <p className="mb-2 text-xs text-muted-foreground">
+            <div className="retro-card rounded-2xl p-3">
+              <p className="mb-2 text-sm font-medium text-void">手动选择视频流</p>
+              <p className="mb-2 text-xs text-void/70">
                 自动抓流命中了多个候选，请选择最像主视频的一项（优先 `hls/mpd`，避开广告域）。
               </p>
               <select
-                className="mb-2 w-full rounded border border-input bg-background px-2 py-1 text-xs"
+                className="mb-2 w-full rounded-xl border border-black/70 bg-white px-2 py-1 font-mono text-xs text-void"
                 value={String(selectedCaptureIdx)}
                 onChange={(e) => setSelectedCaptureIdx(Number(e.target.value))}
               >
@@ -1295,7 +1319,7 @@ export default function AppPage() {
                   </option>
                 ))}
               </select>
-              <Button size="sm" onClick={retryWithSelectedCapture}>
+              <Button size="sm" variant="outline" className="border-black bg-white hover:bg-black hover:text-white" onClick={retryWithSelectedCapture}>
                 使用候选重试
               </Button>
             </div>
@@ -1310,13 +1334,13 @@ export default function AppPage() {
         </div>
 
         {/* ── Right: Subtitle Panel ─────────────────────────────── */}
-        <div className="flex min-h-0 flex-1 flex-col border-t border-border lg:border-l lg:border-t-0">
+        <div className="flex min-h-0 flex-1 flex-col border-t border-black/60 lg:border-l lg:border-t-0">
           {/* Panel header */}
-          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2">
-            <h2 className="text-sm font-semibold">
+          <div className="flex shrink-0 items-center justify-between border-b border-black/60 px-4 py-2">
+            <h2 className="text-sm font-semibold text-void">
               字幕列表
               {rawTimelineSegments.length > 0 && (
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                <span className="ml-2 font-mono text-xs font-normal uppercase tracking-wide text-void/65">
                   {rawTimelineSegments.length} 条
                 </span>
               )}
@@ -1324,7 +1348,7 @@ export default function AppPage() {
             <div className="flex items-center gap-1.5">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs">
+                  <Button variant="outline" size="sm" className="h-7 gap-1 border-black bg-white text-xs hover:bg-black hover:text-white">
                     {subtitleMode === "bilingual" && (
                       <>
                         <Languages className="h-3 w-3" />
@@ -1345,7 +1369,7 @@ export default function AppPage() {
                     )}
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-36">
+                <DropdownMenuContent align="end" className="w-36 border-black bg-canvas">
                   <DropdownMenuRadioGroup
                     value={subtitleMode}
                     onValueChange={(v) => setSubtitleMode(v as SubtitleMode)}

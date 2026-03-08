@@ -11,6 +11,39 @@ import type {
 
 const API_BASE = "/api";
 
+type LiveAsrMessage = {
+  type?: "partial" | "done" | "error" | string;
+  segments?: Segment[];
+  language?: string;
+  provider?: string;
+  completion?: "final" | "partial_complete";
+  error?: string;
+};
+
+function getGatewayApiKey(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = localStorage.getItem("subplayer-settings");
+    if (!raw) return "";
+    const state = JSON.parse(raw)?.state;
+    return typeof state?.gatewayApiKey === "string" ? state.gatewayApiKey.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function makeHeaders(opts?: { json?: boolean }): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (opts?.json) {
+    headers["Content-Type"] = "application/json";
+  }
+  const gatewayApiKey = getGatewayApiKey();
+  if (gatewayApiKey) {
+    headers["x-api-key"] = gatewayApiKey;
+  }
+  return headers;
+}
+
 function getApiKeys() {
   if (typeof window === "undefined") return {};
   try {
@@ -57,6 +90,10 @@ export async function transcribeFile(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE}/asr/transcribe`);
+    const gatewayApiKey = getGatewayApiKey();
+    if (gatewayApiKey) {
+      xhr.setRequestHeader("x-api-key", gatewayApiKey);
+    }
     const onAbort = () => xhr.abort();
     if (signal) {
       if (signal.aborted) {
@@ -123,7 +160,7 @@ export async function transcribeUrl(
   try {
     const res = await fetch(`${API_BASE}/asr/transcribe-url`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: makeHeaders({ json: true }),
       signal: controller.signal,
       body: JSON.stringify({
         url,
@@ -178,7 +215,7 @@ export async function transcribeUrlLive(
   try {
     const res = await fetch(`${API_BASE}/asr/transcribe-url-live`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: makeHeaders({ json: true }),
       signal: controller.signal,
       body: JSON.stringify({
         url,
@@ -210,12 +247,16 @@ export async function transcribeUrlLive(
         buf = buf.slice(idx + 1);
         idx = buf.indexOf("\n");
         if (!line) continue;
-        let msg: any = null;
+        let msg: LiveAsrMessage | null = null;
         try {
-          msg = JSON.parse(line);
+          const parsed = JSON.parse(line) as unknown;
+          if (parsed && typeof parsed === "object") {
+            msg = parsed as LiveAsrMessage;
+          }
         } catch {
           continue;
         }
+        if (!msg?.type) continue;
         if (msg.type === "partial") {
           await handlers?.onPartial?.({
             segments: msg.segments || [],
@@ -266,7 +307,7 @@ export async function translateSegments(
   try {
     const res = await fetch(`${API_BASE}/translate/batch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: makeHeaders({ json: true }),
       signal: controller.signal,
       body: JSON.stringify({
         segments,
@@ -302,7 +343,7 @@ export async function prepareVideo(
 ): Promise<VideoPrepareResult> {
   const res = await fetch(`${API_BASE}/video/prepare`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders({ json: true }),
     signal,
     body: JSON.stringify({ url }),
   });
@@ -325,7 +366,7 @@ export async function prepareVideoDirect(
 ): Promise<VideoPrepareResult> {
   const res = await fetch(`${API_BASE}/video/prepare-direct`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders({ json: true }),
     signal,
     body: JSON.stringify(payload),
   });
@@ -346,7 +387,7 @@ export async function prepareVideoDirect(
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/health`);
+    const res = await fetch(`${API_BASE}/health`, { headers: makeHeaders() });
     return res.ok;
   } catch {
     return false;
@@ -362,7 +403,7 @@ export async function enqueuePreprocessJob(
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${API_BASE}/jobs/enqueue`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders({ json: true }),
     body: JSON.stringify({
       url,
       sourceLang,
@@ -384,7 +425,7 @@ export async function getPreprocessResult(
 ): Promise<PreprocessResultResponse> {
   const res = await fetch(
     `${API_BASE}/jobs/result?url=${encodeURIComponent(url)}&targetLang=${encodeURIComponent(targetLang)}`,
-    { signal },
+    { signal, headers: makeHeaders() },
   );
   if (!res.ok) {
     return { ok: false, status: "failed", error: `result failed (${res.status})` };
@@ -395,7 +436,7 @@ export async function getPreprocessResult(
 export async function getAsrCapability(): Promise<AsrCapabilityResponse> {
   const apiKeys = getApiKeys();
   const q = encodeURIComponent(JSON.stringify(apiKeys));
-  const res = await fetch(`${API_BASE}/asr/capability?apiKeys=${q}`);
+  const res = await fetch(`${API_BASE}/asr/capability?apiKeys=${q}`, { headers: makeHeaders() });
   if (!res.ok) {
     return { ok: false, error: `capability failed (${res.status})` };
   }
@@ -405,7 +446,7 @@ export async function getAsrCapability(): Promise<AsrCapabilityResponse> {
 export async function probeVolcengine(): Promise<VolcengineProbeResponse> {
   const res = await fetch(`${API_BASE}/asr/volcengine-probe`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: makeHeaders({ json: true }),
     body: JSON.stringify({ apiKeys: getApiKeys() }),
   });
   if (!res.ok) {

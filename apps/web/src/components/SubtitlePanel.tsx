@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import type { CSSProperties } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Segment, ReadableBlock, SubtitleMode } from "@/types";
 import { useSettings } from "@/store/settings";
@@ -62,9 +63,9 @@ export function SubtitlePanel({
     return (
       <div className="flex h-full items-center justify-center p-6">
         <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-black/70 bg-white/60">
             <svg
-              className="h-6 w-6 text-muted-foreground"
+              className="h-6 w-6 text-foreground/55"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -77,7 +78,7 @@ export function SubtitlePanel({
               />
             </svg>
           </div>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-foreground/70">
             字幕将在转写完成后显示在这里
           </p>
         </div>
@@ -112,22 +113,22 @@ export function SubtitlePanel({
             const startTime = isBlock ? block!.start : seg!.start;
 
             let highlightClasses = "";
-            let highlightStyleObj: any = {};
+            let highlightStyleObj: CSSProperties = {};
 
             if (isActive) {
               if (settings.highlightStyle === "underline") {
-                highlightClasses = "border-b-2 border-indigo-500 bg-transparent rounded-none";
+                highlightClasses = "border-b-2 border-[#ccff00] bg-transparent rounded-none";
               } else if (settings.highlightStyle === "left-border") {
-                highlightClasses = "border-l-4 border-indigo-500 bg-indigo-500/5 rounded-none ring-0 shadow-none";
+                highlightClasses = "border-l-4 border-[#ccff00] bg-black/5 rounded-none ring-0 shadow-none";
               } else if (settings.highlightStyle === "glow") {
-                highlightClasses = "bg-indigo-500/10";
-                highlightStyleObj = { boxShadow: "0 0 10px rgba(99, 102, 241, 0.5)" };
+                highlightClasses = "bg-black/10";
+                highlightStyleObj = { boxShadow: "0 0 0 1px rgba(5, 5, 5, 0.7), 0 0 10px rgba(204, 255, 0, 0.2)" };
               } else {
-                highlightClasses = "bg-indigo-500/10 shadow-sm shadow-indigo-500/5 ring-1 ring-indigo-500/20";
-                highlightStyleObj = { backgroundColor: "rgba(99, 102, 241, 0.1)" };
+                highlightClasses = "bg-black/8 ring-1 ring-black/20";
+                highlightStyleObj = { backgroundColor: "rgba(5, 5, 5, 0.07)" };
               }
             } else {
-              highlightClasses = "hover:bg-muted/60";
+              highlightClasses = "hover:bg-black/6";
             }
 
             return (
@@ -147,7 +148,7 @@ export function SubtitlePanel({
               >
                 {/* Timestamp */}
                 <span
-                  className={`mt-0.5 shrink-0 font-mono text-xs ${isActive ? "text-indigo-500 dark:text-indigo-400" : "text-muted-foreground"
+                  className={`mt-0.5 shrink-0 font-mono text-xs uppercase tracking-wide ${isActive ? "text-[#6f8a00]" : "text-foreground/45"
                     }`}
                 >
                   {formatTime(startTime)}
@@ -168,9 +169,9 @@ export function SubtitlePanel({
                                 e.stopPropagation();
                                 onSeek(subSeg.start);
                               }}
-                              className={`transition-colors duration-200 ${isSubSegActive
-                                  ? "bg-indigo-500/20 font-medium text-foreground dark:bg-indigo-500/40"
-                                  : "hover:bg-muted"
+                            className={`transition-colors duration-200 ${isSubSegActive
+                                  ? "bg-[#ccff00]/25 font-medium text-foreground"
+                                  : "hover:bg-black/10"
                                 }`}
                             >
                               {subSeg.text}{" "}
@@ -189,7 +190,7 @@ export function SubtitlePanel({
                       className={
                         subtitleMode === "translation"
                           ? `leading-relaxed ${isActive ? "font-medium text-foreground" : "text-foreground/80"}`
-                          : "text-[0.9em] leading-relaxed text-amber-500/90 dark:text-amber-400/80"
+                          : "text-[0.9em] leading-relaxed text-[#6f8a00]"
                       }
                     >
                       {isBlock ? block!.translation : seg!.translation}
@@ -201,7 +202,7 @@ export function SubtitlePanel({
                 {isActive && (settings.highlightStyle === "default" || settings.highlightStyle === "glow") && (
                   <motion.div
                     layoutId="activeIndicator"
-                    className="absolute left-0 top-0 h-full w-0.5 rounded-full bg-indigo-500"
+                    className="absolute left-0 top-0 h-full w-0.5 rounded-full bg-[#ccff00]"
                     transition={{ type: "spring", stiffness: 500, damping: 30 }}
                   />
                 )}

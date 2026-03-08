@@ -1,4 +1,6 @@
-import type { Segment, ExportFormat } from "@/types";
+import type { Segment, ReadableBlock, ExportFormat } from "@/types";
+
+type ExportLine = Pick<Segment, "start" | "end" | "text" | "translation">;
 
 function formatSrtTime(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -24,7 +26,7 @@ function pad3(n: number): string {
   return String(n).padStart(3, "0");
 }
 
-export function toSrt(segments: Segment[], includeTranslation = false): string {
+export function toSrt(segments: ExportLine[], includeTranslation = false): string {
   return (
     segments
       .map((seg, i) => {
@@ -39,7 +41,7 @@ export function toSrt(segments: Segment[], includeTranslation = false): string {
   );
 }
 
-export function toVtt(segments: Segment[], includeTranslation = false): string {
+export function toVtt(segments: ExportLine[], includeTranslation = false): string {
   const lines = ["WEBVTT", ""];
   for (const seg of segments) {
     lines.push(`${formatVttTime(seg.start)} --> ${formatVttTime(seg.end)}`);
@@ -52,11 +54,11 @@ export function toVtt(segments: Segment[], includeTranslation = false): string {
   return lines.join("\n");
 }
 
-export function toJson(segments: Segment[]): string {
+export function toJson(segments: ExportLine[]): string {
   return JSON.stringify(segments, null, 2);
 }
 
-export function toMarkdown(segments: Segment[], includeTranslation = false): string {
+export function toMarkdown(segments: ExportLine[], includeTranslation = false): string {
   return segments
     .map((seg) => {
       let md = `- **${formatSrtTime(seg.start).slice(0, 8)}**: ${seg.text}`;
@@ -68,7 +70,7 @@ export function toMarkdown(segments: Segment[], includeTranslation = false): str
     .join("\n\n");
 }
 
-export function toTxt(segments: Segment[], includeTranslation = false): string {
+export function toTxt(segments: ExportLine[], includeTranslation = false): string {
   return segments
     .map((seg) => {
       let txt = seg.text;
@@ -81,7 +83,7 @@ export function toTxt(segments: Segment[], includeTranslation = false): string {
 }
 
 export function exportSubtitles(
-  segments: Segment[],
+  segments: Segment[] | ReadableBlock[],
   format: ExportFormat,
   filename: string,
   includeTranslation = false,

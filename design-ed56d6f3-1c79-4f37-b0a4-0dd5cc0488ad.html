@@ -1,0 +1,428 @@
+<html lang="en" vid="0"><head vid="1">
+    <meta charset="UTF-8" vid="2">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" vid="3">
+    <title vid="4">Chronos - Time Capsule</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" vid="5">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" vid="6">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&amp;family=Space+Mono:ital,wght@0,400;0,700;1,400&amp;display=swap" rel="stylesheet" vid="7">
+    <style vid="8">
+        :root {
+            --paper-bg: #F0EBE0;
+            --ink-primary: #1A1A1A;
+            --ink-secondary: #4A4A4A;
+            --grid-line: #CCC6B8;
+            --highlight: #D4D8D9;
+            --accent-stain: rgba(40, 40, 40, 0.08);
+            
+            --font-display: 'Cormorant Garamond', serif;
+            --font-mono: 'Space Mono', monospace;
+            
+            --spacing-unit: 1rem;
+            --border-width: 1px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: var(--paper-bg);
+            color: var(--ink-primary);
+            font-family: var(--font-mono);
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+        }
+
+        
+        .app-container {
+            display: grid;
+            grid-template-columns: 1fr 48px; 
+            height: 100%;
+            border-top: var(--border-width) solid var(--ink-primary);
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            border-right: var(--border-width) solid var(--ink-primary);
+        }
+
+        
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            padding: 2rem 0;
+            background: rgba(255,255,255,0.1);
+        }
+
+        .vertical-text {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--ink-primary);
+            transform: rotate(180deg);
+            cursor: pointer;
+            padding: 20px 0;
+        }
+
+        .nav-dot {
+            width: 6px;
+            height: 6px;
+            border: 1px solid var(--ink-primary);
+            border-radius: 50%;
+            margin: 10px 0;
+        }
+        
+        .nav-dot.active {
+            background: var(--ink-primary);
+        }
+
+        
+        .hero-section {
+            padding: 3rem 2rem;
+            border-bottom: var(--border-width) solid var(--ink-primary);
+            position: relative;
+            min-height: 40vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        
+        .ink-stain {
+            position: absolute;
+            top: 50%;
+            right: -10%;
+            width: 200px;
+            height: 200px;
+            background: var(--ink-primary);
+            border-radius: 50% 40% 60% 30% / 40% 50% 60% 50%;
+            filter: blur(40px);
+            opacity: 0.08;
+            transform: translateY(-50%) rotate(12deg);
+            pointer-events: none;
+            mix-blend-mode: multiply;
+        }
+
+        .hero-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .hero-number {
+            font-family: var(--font-display);
+            font-size: 6rem;
+            line-height: 0.8;
+            font-weight: 300;
+            color: var(--ink-primary);
+            z-index: 1;
+        }
+
+        .hero-title {
+            font-family: var(--font-display);
+            font-size: 2rem;
+            font-style: italic;
+            margin-top: 0.5rem;
+            z-index: 1;
+        }
+
+        .hero-desc {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            line-height: 1.6;
+            margin-top: 2rem;
+            max-width: 80%;
+            color: var(--ink-secondary);
+        }
+
+        
+        .grid-table {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .grid-row {
+            display: grid;
+            grid-template-columns: 80px 1fr;
+            border-bottom: var(--border-width) solid var(--grid-line);
+            min-height: 80px;
+        }
+        
+        .grid-row:last-child {
+            border-bottom: none;
+        }
+
+        .cell-label {
+            border-right: var(--border-width) solid var(--grid-line);
+            padding: 1rem;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+        }
+        
+        .cell-label span {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            letter-spacing: 1px;
+            color: var(--ink-secondary);
+        }
+
+        .cell-content {
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        
+        .capsule-meta {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            color: var(--ink-secondary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .capsule-title {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 400;
+            line-height: 1.1;
+        }
+        
+        .capsule-status {
+            display: inline-block;
+            padding: 2px 6px;
+            border: 1px solid var(--ink-primary);
+            font-size: 0.6rem;
+            margin-left: 8px;
+        }
+
+        .capsule-image {
+            width: 100%;
+            height: 100px;
+            background-color: #ddd;
+            margin-top: 1rem;
+            background-size: cover;
+            background-position: center;
+            filter: grayscale(100%) contrast(1.2);
+            
+            border-radius: 0; 
+        }
+
+        
+        .compose-row {
+            grid-template-columns: 1fr;
+            min-height: 100px;
+            background: var(--ink-primary);
+            color: var(--paper-bg);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .compose-row:active {
+            background: var(--ink-secondary);
+        }
+
+        .compose-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 2rem;
+            height: 100%;
+        }
+
+        .compose-text {
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .compose-icon {
+            font-size: 2rem;
+            font-weight: 100;
+            font-family: var(--font-display);
+        }
+
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .grid-row {
+            animation: fadeIn 0.6s ease forwards;
+            opacity: 0;
+        }
+        
+        .grid-row:nth-child(1) { animation-delay: 0.1s; }
+        .grid-row:nth-child(2) { animation-delay: 0.2s; }
+        .grid-row:nth-child(3) { animation-delay: 0.3s; }
+        .grid-row:nth-child(4) { animation-delay: 0.4s; }
+
+        
+        .main-content::-webkit-scrollbar {
+            width: 4px;
+        }
+        .main-content::-webkit-scrollbar-thumb {
+            background: var(--grid-line);
+        }
+
+        
+        .input-line {
+            border: none;
+            border-bottom: 1px solid var(--ink-primary);
+            background: transparent;
+            font-family: var(--font-display);
+            font-size: 1.2rem;
+            color: var(--ink-primary);
+            width: 100%;
+            padding: 0.5rem 0;
+            outline: none;
+            margin-top: 0.5rem;
+        }
+        
+        .input-line::placeholder {
+            color: var(--grid-line);
+            font-style: italic;
+        }
+
+    </style>
+</head>
+<body vid="9">
+
+    <div class="app-container" vid="10">
+        
+        <main class="main-content" vid="11">
+            
+            
+            <section class="hero-section" vid="12">
+                <div class="ink-stain" vid="13"></div>
+                <span class="hero-label" vid="14">Current Timeline</span>
+                <div class="hero-number" vid="15">12</div>
+                <h1 class="hero-title" vid="16">Capsules <br vid="17">in Transit</h1>
+                <p class="hero-desc" vid="18">
+                    Messages preserved in digital amber. <br vid="19">
+                    Next unlock scheduled for: <br vid="20">
+                    <strong vid="21">October 14, 2028</strong>
+                </p>
+            </section>
+
+            
+            <div class="grid-table" vid="22">
+                
+                
+                <article class="grid-row" vid="23">
+                    <div class="cell-label" vid="24"><span vid="25">UNLOCKS</span></div>
+                    <div class="cell-content" vid="26">
+                        <div class="capsule-meta" vid="27">
+                            <span vid="28">To: Future Self</span>
+                            <span vid="29">2028</span>
+                        </div>
+                        <h2 class="capsule-title" vid="30">On turning thirty</h2>
+                        
+                        <div class="capsule-image" style="background-image: url('https://images.unsplash.com/photo-1498426749021-d007c6fbb022?q=80&amp;w=600&amp;auto=format&amp;fit=crop');" vid="31"></div>
+                    </div>
+                </article>
+
+                
+                <article class="grid-row" vid="32">
+                    <div class="cell-label" vid="33"><span vid="34">LOCKED</span></div>
+                    <div class="cell-content" vid="35">
+                        <div class="capsule-meta" vid="36">
+                            <span vid="37">To: Sarah</span>
+                            <span vid="38">2025</span>
+                        </div>
+                        <h2 class="capsule-title" vid="39">The Paris Trip <span class="capsule-status" vid="40">PENDING</span></h2>
+                        <div class="hero-desc" style="margin-top: 0.5rem; font-size: 0.7rem;" vid="41">
+                            GPS Coordinates locked. Unlocks only upon arrival at coordinates.
+                        </div>
+                    </div>
+                </article>
+
+                
+                <article class="grid-row" vid="42">
+                    <div class="cell-label" vid="43"><span vid="44">DRAFT</span></div>
+                    <div class="cell-content" vid="45">
+                        <div class="capsule-meta" vid="46">
+                            <span vid="47">To: My Son</span>
+                            <span vid="48">2040</span>
+                        </div>
+                        <h2 class="capsule-title" vid="49">Advice for high school</h2>
+                        <input type="text" class="input-line" placeholder="Add a note..." value="Don't forget the..." vid="50">
+                    </div>
+                </article>
+
+                
+                <div class="compose-row grid-row" style="margin-top: auto;" vid="51">
+                    <div class="cell-label" style="border-right-color: rgba(255,255,255,0.2); background: #222;" vid="52">
+                        <span style="color: white;" vid="53">ACTION</span>
+                    </div>
+                    <div class="compose-content" vid="54">
+                        <span class="compose-text" vid="55">Compose New</span>
+                        <span class="compose-icon" vid="56">+</span>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+
+        
+        <aside class="sidebar" vid="57">
+            <div class="top-indicators" vid="58">
+                <div class="nav-dot active" vid="59"></div>
+                <div class="nav-dot" vid="60"></div>
+            </div>
+
+            <div class="vertical-nav-group" vid="61">
+                <div class="vertical-text" vid="62">ARCHIVE</div>
+                <div class="vertical-text" style="font-weight: 700;" vid="63">CAPSULES</div>
+                <div class="vertical-text" vid="64">PROFILE</div>
+            </div>
+
+            <div class="bottom-label vertical-text" style="color: var(--ink-secondary); opacity: 0.5;" vid="65">
+                V. 2.0
+            </div>
+        </aside>
+    </div>
+
+    <script vid="66">
+        
+        document.querySelectorAll('.compose-row').forEach(btn => {
+            btn.addEventListener('click', () => {
+                
+                document.body.style.opacity = '0.5';
+                setTimeout(() => {
+                    document.body.style.opacity = '1';
+                }, 200);
+            });
+        });
+    </script>
+
+</body></html>

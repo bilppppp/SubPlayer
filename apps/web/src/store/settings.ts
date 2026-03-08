@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 export type HighlightStyle = "default" | "underline" | "left-border" | "glow";
 
 export interface SettingsState {
+    gatewayApiKey: string;
     // APIs
     volcengineAppId: string;
     volcengineToken: string;
@@ -36,13 +37,14 @@ export interface SettingsState {
     blockTolerance: number;
 
     // Actions
-    setApiKeys: (keys: Partial<Pick<SettingsState, "volcengineAppId" | "volcengineToken" | "volcengineSecretKey" | "volcengineResourceId" | "volcengineMode" | "aliyunKey" | "geminiKey" | "deepseekKey" | "translateProvider" | "asrProvider" | "allowAsrAutoDowngrade">>) => void;
+    setApiKeys: (keys: Partial<Pick<SettingsState, "gatewayApiKey" | "volcengineAppId" | "volcengineToken" | "volcengineSecretKey" | "volcengineResourceId" | "volcengineMode" | "aliyunKey" | "geminiKey" | "deepseekKey" | "translateProvider" | "asrProvider" | "allowAsrAutoDowngrade">>) => void;
     setAppearance: (appearance: Partial<Pick<SettingsState, "panelFontFamily" | "panelFontSize" | "highlightStyle" | "playerFontFamily" | "playerFontSize">>) => void;
     setBlockSettings: (configs: Partial<Pick<SettingsState, "useReadableBlocks" | "blockMaxCharsZh" | "blockMaxCharsEn" | "blockMaxLines" | "blockMaxDuration" | "blockMinDuration" | "blockTolerance">>) => void;
     resetSettings: () => void;
 }
 
 const initialState = {
+    gatewayApiKey: "",
     volcengineAppId: "",
     volcengineToken: "",
     volcengineSecretKey: "",

@@ -21,6 +21,23 @@ if (await envFile.exists()) {
 export const config = {
   // ── Server ─────────────────────────────────────────────────────
   port: Number(process.env.GATEWAY_PORT ?? 8080),
+  nodeEnv: process.env.NODE_ENV ?? "development",
+  isProduction: (process.env.NODE_ENV ?? "development") === "production",
+
+  // ── Gateway security ───────────────────────────────────────────
+  /** Comma-separated CORS allowlist in production, e.g. "https://a.com,https://b.com" */
+  corsAllowOrigins: (process.env.CORS_ALLOW_ORIGINS ?? "")
+    .split(",")
+    .map((s: string) => s.trim())
+    .filter(Boolean),
+
+  /** Enable API key authentication for /api/* except /api/health */
+  gatewayApiKeyRequired: (process.env.GATEWAY_API_KEY_REQUIRED ?? "false").toLowerCase() === "true",
+  gatewayApiKey: (process.env.GATEWAY_API_KEY ?? "").trim(),
+
+  /** Fixed-window, per-IP rate limiting */
+  rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000),
+  rateLimitMax: Number(process.env.RATE_LIMIT_MAX ?? 120),
 
   // ── ASR — Provider selection ───────────────────────────────────
   /** "local" | "volcengine" | "aliyun" */

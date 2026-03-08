@@ -1,0 +1,22 @@
+{
+  "name": "subplayer-promo-video",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bunx remotion studio src/index.ts",
+    "render": "bunx remotion render src/index.ts SubPlayerPromo out/subplayer-promo.mp4",
+    "render:gif": "bunx remotion render src/index.ts SubPlayerPromo out/subplayer-promo.gif --codec=gif"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remotion": "^4.0.365"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.432",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

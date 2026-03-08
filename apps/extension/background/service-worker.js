@@ -210,6 +210,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id;
+      const tabUrl = tabs[0]?.url || "";
       if (!tabId) {
         sendResponse({ ok: false, error: "No active tab" });
         return;
@@ -221,6 +222,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ok: true,
             settings: firstTry.settings || {},
             source: "active-tab",
+            tabUrl,
           });
           return;
         }
@@ -250,6 +252,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 ok: true,
                 settings: secondTry.settings || {},
                 source: "active-tab",
+                tabUrl,
               });
             });
           },

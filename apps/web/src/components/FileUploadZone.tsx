@@ -86,30 +86,30 @@ export function FileUploadZone({ onSubmit, disabled, compact }: FileUploadZonePr
         onClick={() => fileRef.current?.click()}
         whileHover={{ scale: disabled ? 1 : 1.01 }}
         whileTap={{ scale: disabled ? 1 : 0.99 }}
-        className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors ${
+        className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-[24px] border-2 border-dashed transition-colors ${
           compact ? "p-5" : "p-8"
         } ${
           dragOver
-            ? "border-indigo-500 bg-indigo-500/5"
-            : "border-muted-foreground/25 hover:border-indigo-500/50 hover:bg-muted/50"
+            ? "border-black bg-neon/15"
+            : "border-black/35 bg-white/35 hover:border-black/70 hover:bg-white/55"
         } ${disabled ? "pointer-events-none opacity-50" : ""}`}
       >
         {disabled ? (
-          <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+          <Loader2 className="h-10 w-10 animate-spin text-foreground/60" />
         ) : (
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
-            <Upload className="h-6 w-6 text-indigo-500" />
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-black/70 bg-black">
+            <Upload className="h-6 w-6 text-neon" />
           </div>
         )}
         {!compact && (
           <div className="text-center">
-            <p className="text-sm font-medium">拖放视频/音频文件到这里</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm font-medium text-void">拖放视频/音频文件到这里</p>
+            <p className="text-xs text-foreground/70">
               支持 MP4, WebM, MKV, MP3, WAV, M4A 等格式
             </p>
           </div>
         )}
-        <Button variant="secondary" size="sm" disabled={disabled}>
+        <Button variant="outline" size="sm" className="border-black bg-white hover:bg-black hover:text-white" disabled={disabled}>
           <FileVideo className="mr-1.5 h-3.5 w-3.5" />
           选择文件
         </Button>
@@ -125,20 +125,20 @@ export function FileUploadZone({ onSubmit, disabled, compact }: FileUploadZonePr
       {/* URL input */}
       <div className="flex gap-2">
         <div className="relative flex-1">
-          <Link className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Link className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/45" />
           <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
             placeholder="粘贴 YouTube / Bilibili / 视频直链..."
-            className="pl-9"
+            className="border-black/70 bg-white pl-9"
             disabled={disabled}
           />
         </div>
         <Button
           onClick={handleUrlSubmit}
           disabled={disabled || !url.trim()}
-          className="bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
+          className="border border-black bg-black text-neon hover:bg-black/90"
         >
           开始
         </Button>
@@ -146,12 +146,12 @@ export function FileUploadZone({ onSubmit, disabled, compact }: FileUploadZonePr
 
       {/* Language selector */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">源语言:</span>
+        <span className="font-mono text-xs uppercase tracking-wide text-foreground/65">源语言:</span>
         <Select value={language} onValueChange={setLanguage}>
-          <SelectTrigger className="w-32">
+          <SelectTrigger className="w-32 border-black/70 bg-white">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="border-black bg-canvas">
             {LANGUAGES.map((lang) => (
               <SelectItem key={lang.value} value={lang.value}>
                 {lang.label}
@@ -159,12 +159,12 @@ export function FileUploadZone({ onSubmit, disabled, compact }: FileUploadZonePr
             ))}
           </SelectContent>
         </Select>
-        <span className="ml-1 text-xs text-muted-foreground">目标语言:</span>
+        <span className="ml-1 font-mono text-xs uppercase tracking-wide text-foreground/65">目标语言:</span>
         <Select value={targetLanguage} onValueChange={setTargetLanguage}>
-          <SelectTrigger className="w-36">
+          <SelectTrigger className="w-36 border-black/70 bg-white">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="border-black bg-canvas">
             {TARGET_LANGUAGES.map((lang) => (
               <SelectItem key={lang.value} value={lang.value}>
                 {lang.label}
