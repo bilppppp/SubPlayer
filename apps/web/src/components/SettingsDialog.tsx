@@ -37,6 +37,7 @@ export function SettingsDialog() {
     const [open, setOpen] = useState(false);
     const [activeCredTab, setActiveCredTab] = useState("volcengine");
     const [showCredForm, setShowCredForm] = useState(false);
+    const [showDiagPanel, setShowDiagPanel] = useState(false);
     const [checkingCapability, setCheckingCapability] = useState(false);
     const [capability, setCapability] = useState<AsrCapabilityResponse | null>(null);
     const [probingVolc, setProbingVolc] = useState(false);
@@ -121,7 +122,7 @@ export function SettingsDialog() {
                 <Tabs defaultValue="api" className="w-full">
                     <TabsList className="grid w-full grid-cols-4 border border-black/70 bg-white">
                         <TabsTrigger value="api">API 密钥</TabsTrigger>
-                        <TabsTrigger value="diag">诊断</TabsTrigger>
+                        <TabsTrigger value="diag">功能调度/诊断</TabsTrigger>
                         <TabsTrigger value="appearance">外观样式</TabsTrigger>
                         <TabsTrigger value="readable">阅读排版</TabsTrigger>
                     </TabsList>
@@ -288,131 +289,146 @@ export function SettingsDialog() {
                             )}
                         </div>
 
-                        <div className="space-y-4 pt-4 border-t border-black/60">
-                            <Label className="text-base font-semibold">功能调度 (Service Routing)</Label>
-
-                            <div className="space-y-2">
-                                <Label>语音识别 (ASR) 服务商</Label>
-                                <Select
-                                    value={settings.asrProvider || "auto"}
-                                    onValueChange={(val: "auto" | "volcengine" | "aliyun" | "local") => settings.setApiKeys({ asrProvider: val })}
-                                >
-                                    <SelectTrigger className="border-black bg-white">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent className="border-black bg-canvas">
-                                        <SelectItem value="auto">自动 (跟随配置系统依赖)</SelectItem>
-                                        <SelectItem value="volcengine">火山引擎 (Volcengine)</SelectItem>
-                                        <SelectItem value="aliyun">阿里云百炼 (SenseVoice)</SelectItem>
-                                        <SelectItem value="local">本地 (FunASR)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="flex items-center justify-between rounded-[20px] border border-black/70 bg-white/50 p-3">
-                                <div>
-                                    <p className="text-sm font-medium">允许 ASR 自动降级</p>
-                                    <p className="text-xs text-foreground/70">
-                                        关闭后将严格使用当前选择的接入模式，不自动切到 Flash 或其它模式。
-                                    </p>
-                                </div>
-                                <input
-                                    type="checkbox"
-                                    checked={settings.allowAsrAutoDowngrade}
-                                    onChange={(e) => settings.setApiKeys({ allowAsrAutoDowngrade: e.target.checked })}
-                                    className="rounded border-black bg-white"
-                                />
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label>文本翻译 (Translation) 服务商</Label>
-                                <Select
-                                    value={settings.translateProvider || "auto"}
-                                    onValueChange={(val: "auto" | "gemini" | "deepseek" | "qwen") => settings.setApiKeys({ translateProvider: val })}
-                                >
-                                    <SelectTrigger className="border-black bg-white">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent className="border-black bg-canvas">
-                                        <SelectItem value="auto">自动 (优先 Gemini, 备用目标)</SelectItem>
-                                        <SelectItem value="gemini">Gemini</SelectItem>
-                                        <SelectItem value="deepseek">DeepSeek 官方</SelectItem>
-                                        <SelectItem value="qwen">阿里通义千问 (Qwen)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                        </div>
                     </TabsContent>
 
                     <TabsContent value="diag" className="space-y-4 py-4">
-                        <div className="space-y-2 rounded-[20px] border border-black/70 bg-white/50 p-3">
-                            <div className="flex items-center justify-between">
-                                <Label>环境检测</Label>
-                                <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="border-black bg-white hover:bg-black hover:text-white"
-                                    onClick={handleDetectCapability}
-                                    disabled={checkingCapability}
-                                >
-                                    {checkingCapability ? (
-                                        <>
-                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                            检测中
-                                        </>
-                                    ) : (
-                                        "检测"
-                                    )}
-                                </Button>
-                            </div>
-                            {capability && (
-                                <div className="space-y-1 text-xs text-foreground/70">
-                                    <p>可转写: {capability.capability?.canTranscribe ? "是" : "否"}</p>
-                                    <p>本地: {capability.capability?.localReady ? "可用" : "不可用"}（{capability.capability?.localReason || "-"}）</p>
-                                    <p>依赖: ffmpeg {capability.capability?.ffmpegReady ? "OK" : "NO"} / ffprobe {capability.capability?.ffprobeReady ? "OK" : "NO"} / yt-dlp {capability.capability?.ytDlpReady ? "OK" : "NO"}</p>
-                                    <p>云端: Volc {capability.capability?.cloudAvailable?.volcengine ? "OK" : "NO"} / Aliyun {capability.capability?.cloudAvailable?.aliyun ? "OK" : "NO"}</p>
-                                    <p>推荐: {capability.capability?.recommendedProvider || "none"} / 顺序: {(capability.provider_order_auto || []).join(" -> ") || "-"}</p>
-                                </div>
-                            )}
+                        <div className="flex items-center justify-between rounded-xl border border-black/70 bg-white/50 px-3 py-2">
+                            <p className="text-xs text-foreground/70">
+                                环境检测、火山探测、功能调度默认折叠，按需展开
+                            </p>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-black bg-white hover:bg-black hover:text-white"
+                                onClick={() => setShowDiagPanel((v) => !v)}
+                            >
+                                {showDiagPanel ? "收起诊断面板" : "展开诊断面板"}
+                            </Button>
                         </div>
 
-                        <div className="space-y-2 rounded-[20px] border border-black/70 bg-white/50 p-3">
-                            <div className="flex items-center justify-between">
-                                <Label>火山连通性探测</Label>
-                                <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="border-black bg-white hover:bg-black hover:text-white"
-                                    onClick={handleProbeVolc}
-                                    disabled={probingVolc}
-                                >
-                                    {probingVolc ? (
-                                        <>
-                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                            探测中
-                                        </>
-                                    ) : (
-                                        "探测"
+                        {showDiagPanel && (
+                            <div className="space-y-4 rounded-[20px] border border-black/70 bg-white/50 p-3">
+                                <div className="space-y-2 rounded-[16px] border border-black/50 bg-white/60 p-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label>环境检测</Label>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="border-black bg-white hover:bg-black hover:text-white"
+                                            onClick={handleDetectCapability}
+                                            disabled={checkingCapability}
+                                        >
+                                            {checkingCapability ? (
+                                                <>
+                                                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                                    检测中
+                                                </>
+                                            ) : (
+                                                "检测"
+                                            )}
+                                        </Button>
+                                    </div>
+                                    {capability && (
+                                        <div className="space-y-1 text-xs text-foreground/70">
+                                            <p>可转写: {capability.capability?.canTranscribe ? "是" : "否"}</p>
+                                            <p>本地: {capability.capability?.localReady ? "可用" : "不可用"}（{capability.capability?.localReason || "-"}）</p>
+                                            <p>依赖: ffmpeg {capability.capability?.ffmpegReady ? "OK" : "NO"} / ffprobe {capability.capability?.ffprobeReady ? "OK" : "NO"} / yt-dlp {capability.capability?.ytDlpReady ? "OK" : "NO"}</p>
+                                            <p>云端: Volc {capability.capability?.cloudAvailable?.volcengine ? "OK" : "NO"} / Aliyun {capability.capability?.cloudAvailable?.aliyun ? "OK" : "NO"}</p>
+                                            <p>推荐: {capability.capability?.recommendedProvider || "none"} / 顺序: {(capability.provider_order_auto || []).join(" -> ") || "-"}</p>
+                                        </div>
                                     )}
-                                </Button>
-                            </div>
-                            <p className="text-xs text-foreground/70">
-                                只做 WS 握手+最小请求，不跑完整转写。用于快速确认 AppID/Token/ResourceID 是否有效。
-                            </p>
-                            {volcProbe && (
-                                <div className="space-y-1 text-xs text-foreground/70">
-                                    <p>状态: {volcProbe.ok ? "成功" : "失败"} / 模式: {volcProbe.mode || "-"}</p>
-                                    <p>资源: {volcProbe.chosenResourceId || "-"}</p>
-                                    <p>信息: {volcProbe.message || volcProbe.error || "-"}</p>
-                                    {(volcProbe.attempts || []).map((a, idx) => (
-                                        <p key={`${a.resourceId}-${idx}`}>
-                                            - {a.resourceId}: {a.ok ? `OK${a.logid ? ` (logid=${a.logid})` : ""}` : `FAIL (${a.error || "unknown"})`}
-                                        </p>
-                                    ))}
                                 </div>
-                            )}
-                        </div>
+
+                                <div className="space-y-2 rounded-[16px] border border-black/50 bg-white/60 p-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label>火山连通性探测</Label>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="border-black bg-white hover:bg-black hover:text-white"
+                                            onClick={handleProbeVolc}
+                                            disabled={probingVolc}
+                                        >
+                                            {probingVolc ? (
+                                                <>
+                                                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                                    探测中
+                                                </>
+                                            ) : (
+                                                "探测"
+                                            )}
+                                        </Button>
+                                    </div>
+                                    <p className="text-xs text-foreground/70">
+                                        只做 WS 握手+最小请求，不跑完整转写。用于快速确认 AppID/Token/ResourceID 是否有效。
+                                    </p>
+                                    {volcProbe && (
+                                        <div className="space-y-1 text-xs text-foreground/70">
+                                            <p>状态: {volcProbe.ok ? "成功" : "失败"} / 模式: {volcProbe.mode || "-"}</p>
+                                            <p>资源: {volcProbe.chosenResourceId || "-"}</p>
+                                            <p>信息: {volcProbe.message || volcProbe.error || "-"}</p>
+                                            {(volcProbe.attempts || []).map((a, idx) => (
+                                                <p key={`${a.resourceId}-${idx}`}>
+                                                    - {a.resourceId}: {a.ok ? `OK${a.logid ? ` (logid=${a.logid})` : ""}` : `FAIL (${a.error || "unknown"})`}
+                                                </p>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2 rounded-[16px] border border-black/50 bg-white/60 p-3">
+                                    <Label className="text-sm font-semibold">功能调度 (Service Routing)</Label>
+                                    <div className="space-y-2">
+                                        <Label>语音识别 (ASR) 服务商</Label>
+                                        <Select
+                                            value={settings.asrProvider || "auto"}
+                                            onValueChange={(val: "auto" | "volcengine" | "aliyun" | "local") => settings.setApiKeys({ asrProvider: val })}
+                                        >
+                                            <SelectTrigger className="border-black bg-white">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="border-black bg-canvas">
+                                                <SelectItem value="auto">自动 (跟随配置系统依赖)</SelectItem>
+                                                <SelectItem value="volcengine">火山引擎 (Volcengine)</SelectItem>
+                                                <SelectItem value="aliyun">阿里云百炼 (SenseVoice)</SelectItem>
+                                                <SelectItem value="local">本地 (FunASR)</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="flex items-center justify-between rounded-[14px] border border-black/60 bg-white/70 p-2.5">
+                                        <div>
+                                            <p className="text-sm font-medium">允许 ASR 自动降级</p>
+                                            <p className="text-xs text-foreground/70">
+                                                关闭后将严格使用当前选择的接入模式，不自动切到 Flash 或其它模式。
+                                            </p>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.allowAsrAutoDowngrade}
+                                            onChange={(e) => settings.setApiKeys({ allowAsrAutoDowngrade: e.target.checked })}
+                                            className="rounded border-black bg-white"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label>文本翻译 (Translation) 服务商</Label>
+                                        <Select
+                                            value={settings.translateProvider || "auto"}
+                                            onValueChange={(val: "auto" | "gemini" | "deepseek" | "qwen") => settings.setApiKeys({ translateProvider: val })}
+                                        >
+                                            <SelectTrigger className="border-black bg-white">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="border-black bg-canvas">
+                                                <SelectItem value="auto">自动 (优先 Gemini, 备用目标)</SelectItem>
+                                                <SelectItem value="gemini">Gemini</SelectItem>
+                                                <SelectItem value="deepseek">DeepSeek 官方</SelectItem>
+                                                <SelectItem value="qwen">阿里通义千问 (Qwen)</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </TabsContent>
 
                     <TabsContent value="appearance" className="space-y-4 py-4">
