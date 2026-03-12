@@ -7,6 +7,7 @@ import { basename, join } from "path";
 import { createReadStream, existsSync } from "fs";
 import { Readable } from "stream";
 import { firstPlayableUrl } from "../lib/playable-url.js";
+import { buildYtDlpArgVariants } from "../lib/yt-dlp.js";
 
 export const videoRoutes = new Hono();
 
@@ -175,27 +176,6 @@ function siteReferer(url: string): string | null {
   }
 }
 
-function ytdlpBaseArgs(url?: string): string[] {
-  const args = [
-    "--force-ipv4",
-    "--retries", "3",
-    "--no-warnings",
-    "--no-playlist",
-    "--concurrent-fragments", "4",
-    "--extractor-args", "generic:impersonate",
-    "--user-agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  ];
-  if (config.ytCookiesBrowser) {
-    args.push("--cookies-from-browser", config.ytCookiesBrowser);
-  }
-  const referer = url ? siteReferer(url) : null;
-  if (referer) {
-    args.push("--referer", referer);
-  }
-  return args;
-}
-
 function getMimeType(ext: string): string {
   const map: Record<string, string> = {
     ".mp4": "video/mp4",
@@ -244,15 +224,17 @@ async function resolvePlayableUrl(url: string): Promise<string> {
   ];
 
   for (const fmt of attempts) {
-    try {
-      const out = await run("yt-dlp", [...fmt, ...ytdlpBaseArgs(url), url]);
-      const streamUrl = firstPlayableUrl(out);
-      if (streamUrl) return streamUrl;
-    } catch (err: any) {
-      videoLog("resolve_attempt_failed", {
-        url: url.slice(0, 120),
-        error: err.message?.slice(0, 220) ?? "unknown error",
-      });
+    for (const baseArgs of buildYtDlpArgVariants(url, config)) {
+      try {
+        const out = await run("yt-dlp", [...fmt, ...baseArgs, url]);
+        const streamUrl = firstPlayableUrl(out);
+        if (streamUrl) return streamUrl;
+      } catch (err: any) {
+        videoLog("resolve_attempt_failed", {
+          url: url.slice(0, 120),
+          error: err.message?.slice(0, 220) ?? "unknown error",
+        });
+      }
     }
   }
 
@@ -275,20 +257,22 @@ async function tryDownloadVideo(
   formatArgs: string[],
 ): Promise<string | null> {
   const outTemplate = join(workDir, "video.%(ext)s");
-  try {
-    await run("yt-dlp", [
-      ...formatArgs,
-      ...ytdlpBaseArgs(url),
-      "-o", outTemplate,
-      url,
-    ]);
-  } catch (err: any) {
-    videoLog("download_attempt_failed", {
-      url: url.slice(0, 120),
-      error: err.message?.slice(0, 220) ?? "unknown error",
-    });
+  for (const baseArgs of buildYtDlpArgVariants(url, config)) {
+    try {
+      await run("yt-dlp", [
+        ...formatArgs,
+        ...baseArgs,
+        "-o", outTemplate,
+        url,
+      ]);
+      return firstExistingNonEmptyVideoFile(workDir);
+    } catch (err: any) {
+      videoLog("download_attempt_failed", {
+        url: url.slice(0, 120),
+        error: err.message?.slice(0, 220) ?? "unknown error",
+      });
+    }
   }
-
   return firstExistingNonEmptyVideoFile(workDir);
 }
 

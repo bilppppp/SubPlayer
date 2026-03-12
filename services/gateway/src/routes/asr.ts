@@ -13,6 +13,12 @@ import {
   probeVolcengineWs,
   transcribeVolcengineLive,
 } from "../providers/volcengine.js";
+import {
+  buildYtDlpArgs,
+  buildYtDlpArgVariants,
+  summarizeYtDlpFailure,
+  type YtDlpAttemptFailure,
+} from "../lib/yt-dlp.js";
 import { getCachedVideoByOriginUrl } from "./video.js";
 import { spawn } from "child_process";
 import { mkdtemp, unlink, readdir, readFile, rm, stat } from "fs/promises";
@@ -319,13 +325,33 @@ async function tryYtDlpDownload(
   args: string[],
   workDir: string,
   outputPrefix: string,
-): Promise<string | null> {
-  try {
-    await run("yt-dlp", [...args, ...ytdlpBaseArgs(url), "-o", join(workDir, `${outputPrefix}.%(ext)s`), url]);
-  } catch (err: any) {
-    console.log(`[ASR] yt-dlp attempt failed (${outputPrefix}): ${err.message?.slice(0, 220) ?? "unknown error"}`);
+): Promise<{ filePath: string | null; failure: YtDlpAttemptFailure | null }> {
+  for (const baseArgs of buildYtDlpArgVariants(url, config)) {
+    try {
+      await run("yt-dlp", [...args, ...baseArgs, "-o", join(workDir, `${outputPrefix}.%(ext)s`), url]);
+      return {
+        filePath: await firstExistingNonEmptyFile(workDir, [outputPrefix]),
+        failure: null,
+      };
+    } catch (err: any) {
+      const error = err.message?.slice(0, 1200) ?? "unknown error";
+      console.log(`[ASR] yt-dlp attempt failed (${outputPrefix}): ${error.slice(0, 220)}`);
+      const filePath = await firstExistingNonEmptyFile(workDir, [outputPrefix]);
+      if (filePath) {
+        return { filePath, failure: null };
+      }
+      if (baseArgs.includes("--cookies-from-browser")) {
+        return {
+          filePath: null,
+          failure: { outputPrefix, args, error },
+        };
+      }
+    }
   }
-  return firstExistingNonEmptyFile(workDir, [outputPrefix]);
+  return {
+    filePath: null,
+    failure: { outputPrefix, args, error: "yt-dlp failed without stderr output" },
+  };
 }
 
 /**
@@ -334,27 +360,32 @@ async function tryYtDlpDownload(
  * while improving extractor compatibility.
  */
 async function downloadAudioSource(url: string, workDir: string): Promise<string> {
+  const failures: YtDlpAttemptFailure[] = [];
+
   // Attempt 1 (unchanged primary path): direct audio extraction.
   const extracted = await tryYtDlpDownload(url, [
     "-x",
     "--audio-format", "wav",
   ], workDir, "download");
-  if (extracted) return extracted;
+  if (extracted.filePath) return extracted.filePath;
+  if (extracted.failure) failures.push(extracted.failure);
 
   // Attempt 2: download bestaudio container, convert later via ffmpeg.
   const bestAudio = await tryYtDlpDownload(url, [
     "-f", "bestaudio/best",
   ], workDir, "download-audio");
-  if (bestAudio) return bestAudio;
+  if (bestAudio.filePath) return bestAudio.filePath;
+  if (bestAudio.failure) failures.push(bestAudio.failure);
 
   // Attempt 3: download muxed/best video as a final fallback, then extract audio.
   const bestVideo = await tryYtDlpDownload(url, [
     "-f", "bestvideo+bestaudio/best",
     "--merge-output-format", "mp4",
   ], workDir, "download-video");
-  if (bestVideo) return bestVideo;
+  if (bestVideo.filePath) return bestVideo.filePath;
+  if (bestVideo.failure) failures.push(bestVideo.failure);
 
-  throw new Error("yt-dlp failed to produce a non-empty media file");
+  throw new Error(summarizeYtDlpFailure(failures));
 }
 
 function spawnPipeProcess(cmd: string, args: string[]) {
@@ -362,10 +393,10 @@ function spawnPipeProcess(cmd: string, args: string[]) {
 }
 
 async function audioFromUrlViaPipeToWavBuffer(url: string): Promise<Buffer> {
-  const ytdlpAttempts: string[][] = [
-    ["-f", "bestaudio/best", "-o", "-", ...ytdlpBaseArgs(url), url],
-    ["-f", "best", "-o", "-", ...ytdlpBaseArgs(url), url],
-  ];
+  const ytdlpAttempts = buildYtDlpArgVariants(url, config).flatMap((baseArgs) => ([
+    ["-f", "bestaudio/best", "-o", "-", ...baseArgs, url],
+    ["-f", "best", "-o", "-", ...baseArgs, url],
+  ]));
 
   let lastError = "unknown error";
 
@@ -560,34 +591,6 @@ function buildSubLangs(language: string): string {
   return map[language.toLowerCase()] ?? language;
 }
 
-/** Build common yt-dlp args (cookies, ipv4, retries, user-agent) */
-function ytdlpBaseArgs(url?: string): string[] {
-  const args = [
-    "--force-ipv4",
-    "--retries", "3",
-    "--no-warnings",
-    "--no-playlist",
-    "--concurrent-fragments", "4",
-    "--extractor-args", "generic:impersonate",
-    "--user-agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  ];
-  if (config.ytCookiesBrowser) {
-    args.push("--cookies-from-browser", config.ytCookiesBrowser);
-  }
-  if (url) {
-    try {
-      const u = new URL(url);
-      if (/pornhub\.com$/i.test(u.hostname)) {
-        args.push("--referer", `${u.protocol}//${u.host}/`);
-      }
-    } catch {
-      // Ignore malformed URLs, validation happens elsewhere.
-    }
-  }
-  return args;
-}
-
 /**
  * Try to download existing subtitles from the URL (YouTube, Bilibili, etc.).
  * Returns segments if subtitles are found, null otherwise.
@@ -603,25 +606,37 @@ async function tryExtractNativeSubtitles(
 ): Promise<{ segments: Segment[]; language: string } | null> {
   try {
     const subLangs = buildSubLangs(language);
+    let lastProbe: { stderr: string; code: number | null; timedOut?: boolean } | null = null;
 
-    // Try to download subtitles only (no video)
-    // Use json3 as preferred format; --convert-subs handles conversion for
-    // sites like Bilibili that may use different native formats.
-    const { stderr, code, timedOut } = await runIgnoreExit("yt-dlp", [
-      "--skip-download",
-      "--write-subs",
-      "--write-auto-subs",
-      "--sub-langs", subLangs,
-      "--sub-format", "json3",
-      ...ytdlpBaseArgs(url),
-      "-o", join(workDir, "subs"),
-      url,
-    ], 12000);
+    for (const baseArgs of buildYtDlpArgVariants(url, config)) {
+      const probe = await runIgnoreExit("yt-dlp", [
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs", subLangs,
+        "--sub-format", "json3",
+        ...baseArgs,
+        "-o", join(workDir, "subs"),
+        url,
+      ], 12000);
+      lastProbe = probe;
 
-    if (timedOut) {
-      console.log("[ASR] Native subtitle probe timed out, fallback to ASR");
-    } else if (code !== 0) {
-      console.log(`[ASR] yt-dlp subtitle extraction exited with code ${code} (may be partial): ${stderr.slice(0, 200)}`);
+      if (probe.timedOut) {
+        console.log("[ASR] Native subtitle probe timed out, fallback to ASR");
+      } else if (probe.code !== 0) {
+        console.log(`[ASR] yt-dlp subtitle extraction exited with code ${probe.code} (may be partial): ${probe.stderr.slice(0, 200)}`);
+      }
+
+      const files = await readdir(workDir);
+      const subExts = [".json3", ".json", ".vtt", ".srt"];
+      const subFiles = files
+        .filter((f) => subExts.some((ext) => f.endsWith(ext)) && f.startsWith("subs"))
+        .sort();
+
+      if (subFiles.length > 0) {
+        console.log(`[ASR] Native subtitle probe wrote ${subFiles.length} file(s)`);
+        break;
+      }
     }
 
     // Look for downloaded subtitle files — may exist even if exit != 0
@@ -633,6 +648,9 @@ async function tryExtractNativeSubtitles(
       .sort();
 
     if (subFiles.length === 0) {
+      if (lastProbe?.code && !lastProbe?.timedOut) {
+        console.log(`[ASR] No subtitle files found after probe, last yt-dlp stderr: ${lastProbe.stderr.slice(0, 200)}`);
+      }
       console.log("[ASR] No subtitle files found on disk, will use ASR");
       return null;
     }

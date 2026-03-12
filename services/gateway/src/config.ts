@@ -80,6 +80,14 @@ export const config = {
   // ── yt-dlp ────────────────────────────────────────────────────
   /** Browser to extract cookies from for yt-dlp (chrome, firefox, safari, or empty) */
   ytCookiesBrowser: (process.env.YT_COOKIES_BROWSER ?? "").trim(),
+  /** Explicit JS runtimes for YouTube JS challenges. Empty disables override. */
+  ytDlpJsRuntimes: (process.env.YT_DLP_JS_RUNTIMES ?? "deno,node").trim(),
+  /** Remote components yt-dlp may fetch for YouTube JS support. */
+  ytDlpRemoteComponents: (process.env.YT_DLP_REMOTE_COMPONENTS ?? "js").trim(),
+  /** Optional YouTube PO token, e.g. web.gvs+TOKEN_VALUE */
+  ytDlpYoutubePoToken: (process.env.YT_DLP_YOUTUBE_PO_TOKEN ?? "").trim(),
+  /** Optional YouTube player clients, e.g. tv,web_safari,web */
+  ytDlpYoutubePlayerClients: (process.env.YT_DLP_YOUTUBE_PLAYER_CLIENTS ?? "").trim(),
 
   // ── Audio processing ───────────────────────────────────────────
   /** Max chunk duration in seconds for long audio splitting */
