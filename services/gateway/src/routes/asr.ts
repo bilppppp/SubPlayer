@@ -1121,6 +1121,161 @@ asrRoutes.post("/transcribe-upload", async (c) => {
   }
 });
 
+// ── POST /api/asr/transcribe-upload-live — NDJSON stream for local uploads ──
+asrRoutes.post("/transcribe-upload-live", async (c) => {
+  await pruneUploadSessions();
+  const body = await c.req.json<{
+    uploadId?: string;
+    language?: string;
+    provider?: string;
+    apiKeys?: any;
+  }>();
+
+  const uploadId = String(body?.uploadId || "");
+  if (!uploadId) return c.json({ ok: false, error: "Missing uploadId" }, 400);
+
+  const session = uploadSessions.get(uploadId);
+  if (!session) return c.json({ ok: false, error: "Upload session not found" }, 404);
+  if (!session.completed) {
+    return c.json({ ok: false, error: "Upload session not completed" }, 400);
+  }
+
+  const language = String(body?.language ?? "auto");
+  const apiKeys = body?.apiKeys ?? {};
+  const requestedProvider = String(apiKeys.asrProvider || body?.provider || config.asrProvider || "auto");
+  const providerOrder = await resolveProviderOrder(requestedProvider, apiKeys);
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      let closed = false;
+      const safeSend = (obj: any) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // ignore double-close race
+        }
+      };
+
+      (async () => {
+        try {
+          const inputDuration = await getAudioDuration(session.filePath).catch(() => NaN);
+          if (Number.isFinite(inputDuration)) {
+            console.log(`[ASR] upload_live_input_ready duration_sec=${inputDuration.toFixed(1)}`);
+          }
+
+          const audioPath = join(session.dir, "upload_live_audio.wav");
+          await extractAudio(session.filePath, audioPath);
+          const audioDuration = await getAudioDuration(audioPath).catch(() => NaN);
+          if (Number.isFinite(audioDuration)) {
+            console.log(`[ASR] upload_live_audio_ready duration_sec=${audioDuration.toFixed(1)}`);
+          }
+
+          if (
+            Number.isFinite(inputDuration) &&
+            Number.isFinite(audioDuration) &&
+            inputDuration > 1800 &&
+            audioDuration < inputDuration * 0.7
+          ) {
+            throw new Error(
+              `检测到媒体不完整：容器时长 ${fmtDuration(inputDuration)}，可提取音频仅 ${fmtDuration(audioDuration)}。请重试上传，或先上传音频文件。`,
+            );
+          }
+
+          const chunks = await splitAudio(audioPath, config.maxChunkSec, session.dir);
+          console.log(`[ASR] upload_live_audio_chunks count=${chunks.length} chunkSec=${config.maxChunkSec}`);
+
+          const allSegments: Segment[] = [];
+          let timeOffset = 0;
+          let usedProvider = "";
+          let detectedLanguage = language;
+          let completion: "final" | "partial_complete" = "final";
+
+          for (let idx = 0; idx < chunks.length; idx += 1) {
+            const chunk = chunks[idx];
+            const options = { language, format: "wav", apiKeys };
+            const result = await transcribeWithFallback(chunk, options, providerOrder);
+            if (!result.ok) {
+              throw new Error(result.error || "转写失败");
+            }
+
+            usedProvider = result.provider;
+            if (result.language && result.language !== "auto") {
+              detectedLanguage = result.language;
+            }
+            if (result.completion === "partial_complete") {
+              completion = "partial_complete";
+            }
+
+            const chunkSegments: Segment[] = result.segments.map((seg) => ({
+              start: seg.start + timeOffset,
+              end: seg.end + timeOffset,
+              text: seg.text,
+            }));
+            allSegments.push(...chunkSegments);
+
+            safeSend({
+              type: "partial",
+              language: detectedLanguage,
+              provider: usedProvider,
+              completion,
+              chunkIndex: idx + 1,
+              chunkTotal: chunks.length,
+              segments: chunkSegments,
+              totalSegments: allSegments.length,
+            });
+
+            const chunkDuration = await getAudioDuration(chunk).catch(() => NaN);
+            if (Number.isFinite(chunkDuration)) {
+              timeOffset += chunkDuration;
+            } else {
+              timeOffset += config.maxChunkSec;
+            }
+          }
+
+          const lastEnd = allSegments.length > 0 ? allSegments[allSegments.length - 1].end : 0;
+          console.log(
+            `[ASR] upload_live_done segments=${allSegments.length} last_end_sec=${lastEnd.toFixed(1)} provider=${usedProvider} completion=${completion}`,
+          );
+          safeSend({
+            type: "done",
+            language: detectedLanguage,
+            provider: usedProvider,
+            completion,
+            segments: allSegments,
+          });
+        } catch (err: any) {
+          safeSend({ type: "error", error: err?.message || "live transcribe failed" });
+        } finally {
+          await removeUploadSession(uploadId);
+          safeClose();
+        }
+      })().catch((err) => {
+        safeSend({ type: "error", error: err?.message || "live transcribe crashed" });
+        safeClose();
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
+});
+
 // ── POST /api/asr/transcribe — upload file ──────────────────────────
 asrRoutes.post("/transcribe", async (c) => {
   const body = await c.req.parseBody();

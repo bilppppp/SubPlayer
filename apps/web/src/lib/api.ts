@@ -110,43 +110,39 @@ async function parseJsonOrThrow<T>(res: Response, fallback = "Invalid response f
   }
 }
 
-async function transcribeFileChunked(
+async function uploadFileForAsr(
   file: File,
-  language: string,
-  model: string,
   onProgress?: (pct: number) => void,
   signal?: AbortSignal,
-): Promise<TranscribeResult> {
+): Promise<{ gatewayBase: string; uploadId: string }> {
   const gatewayBase = resolveDirectGatewayBase();
-  let uploadId = "";
-  let uploadCompleted = false;
-  try {
-    const initRes = await fetch(`${gatewayBase}/api/asr/upload/init`, {
-      method: "POST",
-      headers: makeGatewayHeaders({ json: true }),
-      body: JSON.stringify({
-        fileName: file.name,
-        fileSize: file.size,
-        chunkSize: DEFAULT_UPLOAD_CHUNK_BYTES,
-      }),
-      signal,
-    });
-    if (!initRes.ok) {
-      const text = await initRes.text().catch(() => "");
-      throw new Error(`上传初始化失败：${initRes.status} ${text}`);
-    }
-    const initData = await parseJsonOrThrow<{
-      ok: boolean;
-      uploadId: string;
-      chunkSize: number;
-      totalChunks: number;
-      error?: string;
-    }>(initRes, "上传初始化返回异常");
-    if (!initData.ok || !initData.uploadId) {
-      throw new Error(initData.error || "上传初始化失败");
-    }
+  const initRes = await fetch(`${gatewayBase}/api/asr/upload/init`, {
+    method: "POST",
+    headers: makeGatewayHeaders({ json: true }),
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      chunkSize: DEFAULT_UPLOAD_CHUNK_BYTES,
+    }),
+    signal,
+  });
+  if (!initRes.ok) {
+    const text = await initRes.text().catch(() => "");
+    throw new Error(`上传初始化失败：${initRes.status} ${text}`);
+  }
+  const initData = await parseJsonOrThrow<{
+    ok: boolean;
+    uploadId: string;
+    chunkSize: number;
+    totalChunks: number;
+    error?: string;
+  }>(initRes, "上传初始化返回异常");
+  if (!initData.ok || !initData.uploadId) {
+    throw new Error(initData.error || "上传初始化失败");
+  }
 
-    uploadId = initData.uploadId;
+  const uploadId = initData.uploadId;
+  try {
     const chunkSize = Math.max(1, Number(initData.chunkSize || DEFAULT_UPLOAD_CHUNK_BYTES));
     const totalChunks = Math.max(1, Number(initData.totalChunks || Math.ceil(file.size / chunkSize)));
 
@@ -186,8 +182,25 @@ async function transcribeFileChunked(
       "上传完成确认返回异常",
     );
     if (!completeData.ok) throw new Error(completeData.error || "上传完成确认失败");
-    uploadCompleted = true;
+    return { gatewayBase, uploadId };
+  } catch (err) {
+    fetch(`${gatewayBase}/api/asr/upload/${uploadId}`, {
+      method: "DELETE",
+      headers: makeGatewayHeaders({ json: true }),
+    }).catch(() => {});
+    throw err;
+  }
+}
 
+async function transcribeFileChunked(
+  file: File,
+  language: string,
+  model: string,
+  onProgress?: (pct: number) => void,
+  signal?: AbortSignal,
+): Promise<TranscribeResult> {
+  const { gatewayBase, uploadId } = await uploadFileForAsr(file, onProgress, signal);
+  try {
     const transcribeRes = await fetch(`${gatewayBase}/api/asr/transcribe-upload`, {
       method: "POST",
       headers: makeGatewayHeaders({ json: true }),
@@ -206,12 +219,10 @@ async function transcribeFileChunked(
     }
     return parseJsonOrThrow<TranscribeResult>(transcribeRes);
   } finally {
-    if (uploadId && !uploadCompleted) {
-      fetch(`${gatewayBase}/api/asr/upload/${uploadId}`, {
-        method: "DELETE",
-        headers: makeGatewayHeaders({ json: true }),
-      }).catch(() => {});
-    }
+    fetch(`${gatewayBase}/api/asr/upload/${uploadId}`, {
+      method: "DELETE",
+      headers: makeGatewayHeaders({ json: true }),
+    }).catch(() => {});
   }
 }
 
@@ -283,6 +294,112 @@ export async function transcribeFile(
     });
     xhr.send(form);
   });
+}
+
+export async function transcribeFileLive(
+  file: File,
+  language = "auto",
+  model = "multilingual",
+  handlers?: {
+    onPartial?: (payload: { segments: Segment[]; language?: string; provider?: string }) => void | Promise<void>;
+    onDone?: (payload: { segments: Segment[]; language?: string; provider?: string; completion?: "final" | "partial_complete" }) => void | Promise<void>;
+  },
+  onUploadProgress?: (pct: number) => void,
+  signal?: AbortSignal,
+): Promise<TranscribeResult> {
+  if (file.size < CHUNKED_UPLOAD_THRESHOLD_BYTES) {
+    const oneShot = await transcribeFile(file, language, model, onUploadProgress, signal);
+    if (oneShot.ok) {
+      await handlers?.onDone?.({
+        segments: oneShot.segments || [],
+        language: oneShot.language,
+        provider: oneShot.provider,
+        completion: oneShot.completion,
+      });
+    }
+    return oneShot;
+  }
+
+  const { gatewayBase, uploadId } = await uploadFileForAsr(file, onUploadProgress, signal);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 900_000);
+  const onAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  let uploadOwnedByServer = false;
+  try {
+    const res = await fetch(`${gatewayBase}/api/asr/transcribe-upload-live`, {
+      method: "POST",
+      headers: makeGatewayHeaders({ json: true }),
+      signal: controller.signal,
+      body: JSON.stringify({
+        uploadId,
+        language,
+        model,
+        apiKeys: getApiKeys(),
+      }),
+    });
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Server error: ${res.status} ${text}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let finalResult: TranscribeResult | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx = buf.indexOf("\n");
+      while (idx >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (line) {
+          const msg = JSON.parse(line) as LiveAsrMessage;
+          if (msg.type === "partial") {
+            await handlers?.onPartial?.({
+              segments: msg.segments || [],
+              language: msg.language || language,
+              provider: msg.provider,
+            });
+          } else if (msg.type === "done") {
+            uploadOwnedByServer = true;
+            const payload = {
+              ok: true,
+              language: msg.language || language,
+              provider: msg.provider,
+              completion: msg.completion,
+              segments: msg.segments || [],
+              full_text: (msg.segments || []).map((s: Segment) => s.text).join(" "),
+            } as TranscribeResult;
+            finalResult = payload;
+            await handlers?.onDone?.(payload);
+          } else if (msg.type === "error") {
+            throw new Error(msg.error || "Live ASR failed");
+          }
+        }
+        idx = buf.indexOf("\n");
+      }
+    }
+
+    if (finalResult) return finalResult;
+    throw new Error("Live ASR stream ended without final result");
+  } finally {
+    if (!uploadOwnedByServer) {
+      fetch(`${gatewayBase}/api/asr/upload/${uploadId}`, {
+        method: "DELETE",
+        headers: makeGatewayHeaders({ json: true }),
+      }).catch(() => {});
+    }
+    if (signal) signal.removeEventListener("abort", onAbort);
+    clearTimeout(timeout);
+  }
 }
 
 export async function transcribeUrl(

@@ -18,7 +18,7 @@ import { SubtitlePanel } from "@/components/SubtitlePanel";
 import { TaskProgress } from "@/components/TaskProgress";
 import { ExportDialog } from "@/components/ExportDialog";
 import { useSubtitleSync } from "@/hooks/use-subtitle-sync";
-import { getPreprocessResult, transcribeFile, transcribeUrl, transcribeUrlLive, translateSegments, prepareVideo, prepareVideoDirect } from "@/lib/api";
+import { getPreprocessResult, transcribeFile, transcribeFileLive, transcribeUrl, transcribeUrlLive, translateSegments, prepareVideo, prepareVideoDirect } from "@/lib/api";
 import { generateReadableBlocks, type ResegmentOptions } from "@/lib/resegment";
 import { useSettings } from "@/store/settings";
 import type { MediaInput, Segment, SubtitleMode, TaskState } from "@/types";
@@ -761,27 +761,152 @@ export default function AppPage() {
             progress: 0,
             message: `正在上传 ${input.file.name}（${formatFileSize(input.file.size)}），系统会自动提取音频并识别...`,
           });
-          const result = await transcribeFile(
-            input.file,
-            language,
-            "multilingual",
-            (pct) => {
+          const liveRaw: Segment[] = [];
+          const liveTranslations: string[] = [];
+          let nextTranslate = 0;
+          const translateChunk = async (force = false) => {
+            const pending = liveRaw.length - nextTranslate;
+            if (pending <= 0) return;
+            if (!force && pending < 5) return;
+            const chunkSize = Math.min(5, pending);
+            const sourceLang =
+              detectedLang && detectedLang !== "auto"
+                ? detectedLang
+                : language === "auto"
+                  ? "en"
+                  : language;
+            const target = targetLangPreference && targetLangPreference !== "auto"
+              ? targetLangPreference
+              : (sourceLang === "zh" ? "en" : "zh");
+            setTargetLang(target);
+            if (shouldSkipTranslation(sourceLang, target)) {
+              for (let j = 0; j < chunkSize; j += 1) {
+                liveTranslations[nextTranslate + j] = liveRaw[nextTranslate + j]?.text || "";
+              }
+              nextTranslate += chunkSize;
+              liveTranslatedUntil = Math.max(liveTranslatedUntil, nextTranslate);
               setTask({
-                phase: "uploading",
-                progress: Math.min(pct, 95),
-                message: `上传 ${pct}%`,
+                phase: "translating",
+                progress: Math.round((nextTranslate / Math.max(1, liveRaw.length)) * 100),
+                message: "源语言与目标语言一致，已跳过翻译",
               });
-            },
-            nextSignal(),
-          );
-          setTask({
-            phase: "transcribing",
-            progress: 95,
-            message: "AI 正在转写...",
-          });
-          if (!result.ok) throw new Error(result.error ?? "转写失败");
-          newSegments = splitOversizedSegments(result.segments);
-          detectedLang = result.language ?? "";
+              setRawTimelineSegments([...liveRaw]);
+              setTranslatedTexts(Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""));
+              return;
+            }
+            setTask({
+              phase: "translating",
+              progress: Math.round((nextTranslate / Math.max(1, liveRaw.length)) * 100),
+              message: `流式翻译 ${Math.min(nextTranslate + chunkSize, liveRaw.length)}/${liveRaw.length}...`,
+            });
+            const trans = await translateSegments(
+              liveRaw.slice(nextTranslate, nextTranslate + chunkSize),
+              sourceLang,
+              target,
+              undefined,
+              600_000,
+            );
+            if (trans.ok && trans.segments.length > 0) {
+              for (let j = 0; j < trans.segments.length; j += 1) {
+                liveTranslations[nextTranslate + j] = trans.segments[j].translation || "";
+              }
+            } else {
+              for (let j = 0; j < chunkSize; j += 1) {
+                liveTranslations[nextTranslate + j] = liveRaw[nextTranslate + j]?.text || "";
+              }
+            }
+            nextTranslate += chunkSize;
+            liveTranslatedUntil = Math.max(liveTranslatedUntil, nextTranslate);
+            setRawTimelineSegments([...liveRaw]);
+            setTranslatedTexts(Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""));
+          };
+
+          try {
+            const result = await transcribeFileLive(
+              input.file,
+              language,
+              "multilingual",
+              {
+                onPartial: async (payload) => {
+                  await waitIfPaused();
+                  const normalized = splitOversizedSegments(payload.segments).map((s) => ({
+                    start: s.start,
+                    end: s.end,
+                    text: s.text,
+                  }));
+                  liveRaw.push(...normalized);
+                  detectedLang = payload.language ?? detectedLang ?? language;
+                  setTask({
+                    phase: "transcribing",
+                    progress: 60,
+                    message: `流式识别中 — ${liveRaw.length} 段`,
+                  });
+                  setRawTimelineSegments([...liveRaw]);
+                  setTranslatedTexts(Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""));
+                  await translateChunk(false);
+                },
+                onDone: async (payload) => {
+                  const normalized = splitOversizedSegments(payload.segments).map((s) => ({
+                    start: s.start,
+                    end: s.end,
+                    text: s.text,
+                  }));
+                  liveRaw.splice(0, liveRaw.length, ...normalized);
+                  detectedLang = payload.language ?? detectedLang ?? language;
+                  await translateChunk(true);
+                },
+              },
+              (pct) => {
+                setTask({
+                  phase: "uploading",
+                  progress: Math.min(pct, 95),
+                  message: `上传 ${pct}%`,
+                });
+              },
+              nextSignal(),
+            );
+            if (!result.ok) throw new Error(result.error ?? "转写失败");
+            newSegments = composeAlignedSegments(
+              [...liveRaw],
+              Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""),
+            );
+          } catch (liveErr) {
+            console.warn("[ASR] local upload live interrupted, fallback to classic transcribe-file", liveErr);
+            const liveLooksUsable = liveRaw.length >= 40;
+            if (liveLooksUsable) {
+              setTask({
+                phase: "translating",
+                progress: 92,
+                message: "流式中断，已使用已识别内容继续处理",
+              });
+              newSegments = composeAlignedSegments(
+                [...liveRaw],
+                Array.from({ length: liveRaw.length }, (_, i) => liveTranslations[i] || ""),
+              );
+            } else {
+              setTask({
+                phase: "transcribing",
+                progress: 50,
+                message: "流式中断，回退完整转写...",
+              });
+              const fallback = await transcribeFile(
+                input.file,
+                language,
+                "multilingual",
+                (pct) => {
+                  setTask({
+                    phase: "uploading",
+                    progress: Math.min(pct, 95),
+                    message: `上传 ${pct}%`,
+                  });
+                },
+                nextSignal(),
+              );
+              if (!fallback.ok) throw new Error(fallback.error ?? "转写失败");
+              newSegments = splitOversizedSegments(fallback.segments);
+              detectedLang = fallback.language ?? detectedLang ?? "";
+            }
+          }
         } else if (input.type === "url") {
           await waitIfPaused();
           setTask({
@@ -835,7 +960,7 @@ export default function AppPage() {
                 liveRaw.slice(nextTranslate, nextTranslate + chunkSize),
                 sourceLang,
                 target,
-                nextSignal(),
+                undefined,
               );
               if (trans.ok && trans.segments.length > 0) {
                 for (let j = 0; j < trans.segments.length; j += 1) {
