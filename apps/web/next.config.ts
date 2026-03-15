@@ -21,6 +21,9 @@ const nextConfig: NextConfig = {
 
   experimental: {
     proxyTimeout: 600000, // 10 minutes
+    // Allow large local file uploads (e.g. multi-hour videos) to pass through
+    // Next.js dev/prod proxy to gateway `/api/asr/transcribe`.
+    proxyClientMaxBodySize: "4096mb",
   },
 };
 

@@ -21,9 +21,10 @@ import {
 } from "../lib/yt-dlp.js";
 import { getCachedVideoByOriginUrl } from "./video.js";
 import { spawn } from "child_process";
-import { mkdtemp, unlink, readdir, readFile, rm, stat } from "fs/promises";
+import { mkdtemp, unlink, readdir, readFile, rm, stat, open } from "fs/promises";
 import { tmpdir } from "os";
 import { join, extname } from "path";
+import { randomUUID } from "crypto";
 
 export const asrRoutes = new Hono();
 const ASR_PIPE_MAX_WAV_BYTES = Number(process.env.ASR_PIPE_MAX_WAV_MB ?? "200") * 1024 * 1024;
@@ -34,6 +35,26 @@ class AsrPipeMemoryLimitError extends Error {
     this.name = "AsrPipeMemoryLimitError";
   }
 }
+
+type UploadSession = {
+  id: string;
+  dir: string;
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+  chunkSize: number;
+  totalChunks: number;
+  received: Set<number>;
+  completed: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const uploadSessions = new Map<string, UploadSession>();
+const UPLOAD_SESSION_TTL_MS = Number(process.env.ASR_UPLOAD_SESSION_TTL_MS ?? String(6 * 60 * 60 * 1000));
+const DEFAULT_UPLOAD_CHUNK_BYTES = Number(process.env.ASR_UPLOAD_CHUNK_BYTES ?? String(8 * 1024 * 1024));
+const MIN_UPLOAD_CHUNK_BYTES = 1024 * 1024;
+const MAX_UPLOAD_CHUNK_BYTES = 64 * 1024 * 1024;
 
 // ── helpers ─────────────────────────────────────────────────────────
 
@@ -268,30 +289,50 @@ async function getAudioDuration(filePath: string): Promise<number> {
   return parseFloat(out.trim());
 }
 
+function fmtDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "-";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0) return `${h}h${String(m).padStart(2, "0")}m${String(s).padStart(2, "0")}s`;
+  return `${m}m${String(s).padStart(2, "0")}s`;
+}
+
 async function splitAudio(
   audioPath: string,
   chunkSec: number,
   outDir: string
 ): Promise<string[]> {
-  const duration = await getAudioDuration(audioPath);
-  if (duration <= chunkSec) return [audioPath];
+  // Use ffmpeg segment muxer to avoid relying on a single duration probe,
+  // which can become unreliable on some long files/codecs.
+  const pattern = join(outDir, "chunk_%05d.wav");
+  await run("ffmpeg", [
+    "-y",
+    "-i", audioPath,
+    "-f", "segment",
+    "-segment_time", String(chunkSec),
+    "-c:a", "pcm_s16le",
+    "-ar", "16000",
+    "-ac", "1",
+    pattern,
+  ]);
+
+  const files = (await readdir(outDir))
+    .filter((f) => /^chunk_\d{5}\.wav$/.test(f))
+    .sort((a, b) => a.localeCompare(b));
 
   const chunks: string[] = [];
-  for (let start = 0; start < duration; start += chunkSec) {
-    const chunkPath = join(outDir, `chunk_${start}.wav`);
-    await run("ffmpeg", [
-      "-y",
-      "-i", audioPath,
-      "-ss", String(start),
-      "-t", String(chunkSec),
-      "-acodec", "pcm_s16le",
-      "-ar", "16000",
-      "-ac", "1",
-      chunkPath,
-    ]);
-    chunks.push(chunkPath);
+  for (const file of files) {
+    const p = join(outDir, file);
+    try {
+      const info = await stat(p);
+      if (info.size > 0) chunks.push(p);
+    } catch {
+      // ignore unreadable chunk
+    }
   }
-  return chunks;
+
+  return chunks.length > 0 ? chunks : [audioPath];
 }
 
 async function cleanupDir(dir: string) {
@@ -300,6 +341,116 @@ async function cleanupDir(dir: string) {
     for (const f of files) await unlink(join(dir, f)).catch(() => { });
     await rm(dir, { recursive: true, force: true }).catch(() => { });
   } catch { }
+}
+
+async function removeUploadSession(uploadId: string): Promise<void> {
+  const session = uploadSessions.get(uploadId);
+  if (!session) return;
+  uploadSessions.delete(uploadId);
+  await cleanupDir(session.dir);
+}
+
+async function pruneUploadSessions(): Promise<void> {
+  const now = Date.now();
+  const staleIds: string[] = [];
+  for (const [id, s] of uploadSessions.entries()) {
+    if (now - s.updatedAt > UPLOAD_SESSION_TTL_MS) {
+      staleIds.push(id);
+    }
+  }
+  for (const id of staleIds) {
+    await removeUploadSession(id);
+  }
+}
+
+function clampChunkSize(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_UPLOAD_CHUNK_BYTES;
+  return Math.max(MIN_UPLOAD_CHUNK_BYTES, Math.min(MAX_UPLOAD_CHUNK_BYTES, Math.floor(n)));
+}
+
+async function transcribePreparedInput(
+  inputPath: string,
+  workDir: string,
+  language: string,
+  apiKeys: any,
+  providerOrder: string[],
+  logPrefix: string,
+): Promise<{
+  language: string;
+  provider: string;
+  completion: "final" | "partial_complete";
+  segments: Segment[];
+}> {
+  const inputDuration = await getAudioDuration(inputPath).catch(() => NaN);
+  if (Number.isFinite(inputDuration)) {
+    console.log(`[ASR] ${logPrefix}_input_ready duration_sec=${inputDuration.toFixed(1)}`);
+  }
+
+  const audioPath = join(workDir, `${logPrefix}_audio.wav`);
+  await extractAudio(inputPath, audioPath);
+  const audioDuration = await getAudioDuration(audioPath).catch(() => NaN);
+  if (Number.isFinite(audioDuration)) {
+    console.log(`[ASR] ${logPrefix}_audio_ready duration_sec=${audioDuration.toFixed(1)}`);
+  }
+
+  if (
+    Number.isFinite(inputDuration) &&
+    Number.isFinite(audioDuration) &&
+    inputDuration > 1800 &&
+    audioDuration < inputDuration * 0.7
+  ) {
+    throw new Error(
+      `检测到媒体不完整：容器时长 ${fmtDuration(inputDuration)}，可提取音频仅 ${fmtDuration(audioDuration)}。请重试上传，或先上传音频文件。`,
+    );
+  }
+
+  const chunks = await splitAudio(audioPath, config.maxChunkSec, workDir);
+  console.log(`[ASR] ${logPrefix}_audio_chunks count=${chunks.length} chunkSec=${config.maxChunkSec}`);
+
+  const allSegments: Segment[] = [];
+  let timeOffset = 0;
+  let usedProvider = "";
+  let detectedLanguage = language;
+  let completion: "final" | "partial_complete" = "final";
+
+  for (const chunk of chunks) {
+    const options = { language, format: "wav", apiKeys };
+    const result = await transcribeWithFallback(chunk, options, providerOrder);
+
+    if (!result.ok) {
+      throw new Error(result.error || "转写失败");
+    }
+
+    usedProvider = result.provider;
+    if (result.language && result.language !== "auto") {
+      detectedLanguage = result.language;
+    }
+    if (result.completion === "partial_complete") {
+      completion = "partial_complete";
+    }
+
+    for (const seg of result.segments) {
+      allSegments.push({
+        start: seg.start + timeOffset,
+        end: seg.end + timeOffset,
+        text: seg.text,
+      });
+    }
+
+    const chunkDuration = await getAudioDuration(chunk).catch(() => NaN);
+    if (Number.isFinite(chunkDuration)) {
+      timeOffset += chunkDuration;
+    } else {
+      timeOffset += config.maxChunkSec;
+    }
+  }
+
+  return {
+    language: detectedLanguage,
+    provider: usedProvider,
+    completion,
+    segments: allSegments,
+  };
 }
 
 async function firstExistingNonEmptyFile(
@@ -785,6 +936,191 @@ asrRoutes.post("/volcengine-probe", async (c) => {
   }
 });
 
+// ── Local chunk upload pipeline (for very large local files) ───────
+asrRoutes.post("/upload/init", async (c) => {
+  await pruneUploadSessions();
+  const body = await c.req.json<{
+    fileName?: string;
+    fileSize?: number;
+    chunkSize?: number;
+  }>();
+
+  const fileName = String(body?.fileName || "upload.bin");
+  const fileSize = Number(body?.fileSize || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    return c.json({ ok: false, error: "Invalid fileSize" }, 400);
+  }
+
+  const chunkSize = clampChunkSize(Number(body?.chunkSize || DEFAULT_UPLOAD_CHUNK_BYTES));
+  const totalChunks = Math.ceil(fileSize / chunkSize);
+  if (totalChunks <= 0) {
+    return c.json({ ok: false, error: "Invalid chunk plan" }, 400);
+  }
+
+  const id = randomUUID();
+  const dir = await mkdtemp(join(tmpdir(), "subplayer-upload-"));
+  const ext = extname(fileName) || ".bin";
+  const filePath = join(dir, `input${ext}`);
+  const fh = await open(filePath, "w");
+  try {
+    await fh.truncate(fileSize);
+  } finally {
+    await fh.close();
+  }
+
+  uploadSessions.set(id, {
+    id,
+    dir,
+    filePath,
+    fileName,
+    fileSize,
+    chunkSize,
+    totalChunks,
+    received: new Set<number>(),
+    completed: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  return c.json({
+    ok: true,
+    uploadId: id,
+    fileSize,
+    chunkSize,
+    totalChunks,
+  });
+});
+
+asrRoutes.put("/upload/:id/chunk", async (c) => {
+  await pruneUploadSessions();
+  const id = c.req.param("id");
+  const session = uploadSessions.get(id);
+  if (!session) return c.json({ ok: false, error: "Upload session not found" }, 404);
+  if (session.completed) return c.json({ ok: false, error: "Upload session already completed" }, 409);
+
+  const index = Number(c.req.query("index"));
+  if (!Number.isInteger(index) || index < 0 || index >= session.totalChunks) {
+    return c.json({ ok: false, error: "Invalid chunk index" }, 400);
+  }
+
+  const chunk = Buffer.from(await c.req.arrayBuffer());
+  const expectedSize = index === session.totalChunks - 1
+    ? session.fileSize - index * session.chunkSize
+    : session.chunkSize;
+  if (chunk.length !== expectedSize) {
+    return c.json(
+      { ok: false, error: `Chunk size mismatch: got ${chunk.length}, expected ${expectedSize}` },
+      400,
+    );
+  }
+
+  const fh = await open(session.filePath, "r+");
+  try {
+    await fh.write(chunk, 0, chunk.length, index * session.chunkSize);
+  } finally {
+    await fh.close();
+  }
+
+  session.received.add(index);
+  session.updatedAt = Date.now();
+
+  return c.json({
+    ok: true,
+    uploadId: id,
+    receivedChunks: session.received.size,
+    totalChunks: session.totalChunks,
+  });
+});
+
+asrRoutes.post("/upload/:id/complete", async (c) => {
+  await pruneUploadSessions();
+  const id = c.req.param("id");
+  const session = uploadSessions.get(id);
+  if (!session) return c.json({ ok: false, error: "Upload session not found" }, 404);
+
+  if (session.received.size !== session.totalChunks) {
+    return c.json({
+      ok: false,
+      error: `Upload incomplete: ${session.received.size}/${session.totalChunks} chunks`,
+    }, 400);
+  }
+
+  const info = await stat(session.filePath).catch(() => null);
+  if (!info || info.size < session.fileSize) {
+    return c.json({ ok: false, error: "Uploaded file is incomplete on disk" }, 400);
+  }
+
+  session.completed = true;
+  session.updatedAt = Date.now();
+
+  return c.json({
+    ok: true,
+    uploadId: id,
+    fileSize: session.fileSize,
+    totalChunks: session.totalChunks,
+  });
+});
+
+asrRoutes.delete("/upload/:id", async (c) => {
+  const id = c.req.param("id");
+  await removeUploadSession(id);
+  return c.json({ ok: true });
+});
+
+asrRoutes.post("/transcribe-upload", async (c) => {
+  await pruneUploadSessions();
+  const body = await c.req.json<{
+    uploadId?: string;
+    language?: string;
+    provider?: string;
+    apiKeys?: any;
+  }>();
+
+  const uploadId = String(body?.uploadId || "");
+  if (!uploadId) return c.json({ ok: false, error: "Missing uploadId" }, 400);
+
+  const session = uploadSessions.get(uploadId);
+  if (!session) return c.json({ ok: false, error: "Upload session not found" }, 404);
+  if (!session.completed) {
+    return c.json({ ok: false, error: "Upload session not completed" }, 400);
+  }
+
+  const language = String(body?.language ?? "auto");
+  const apiKeys = body?.apiKeys ?? {};
+  const requestedProvider = String(apiKeys.asrProvider || body?.provider || config.asrProvider || "auto");
+  const providerOrder = await resolveProviderOrder(requestedProvider, apiKeys);
+
+  try {
+    const result = await transcribePreparedInput(
+      session.filePath,
+      session.dir,
+      language,
+      apiKeys,
+      providerOrder,
+      "upload",
+    );
+    const lastEnd = result.segments.length > 0 ? result.segments[result.segments.length - 1].end : 0;
+    console.log(
+      `[ASR] upload_transcribe_done segments=${result.segments.length} last_end_sec=${lastEnd.toFixed(1)} provider=${result.provider} completion=${result.completion}`,
+    );
+
+    await removeUploadSession(uploadId);
+    return c.json({
+      ok: true,
+      language: result.language,
+      provider: result.provider,
+      completion: result.completion,
+      full_text: result.segments.map((s) => s.text).join(" "),
+      segments: result.segments,
+    });
+  } catch (err: any) {
+    const msg = err?.message || "transcribe upload failed";
+    await removeUploadSession(uploadId);
+    const status = msg.includes("检测到媒体不完整") ? 400 : 500;
+    return c.json({ ok: false, error: msg }, status);
+  }
+});
+
 // ── POST /api/asr/transcribe — upload file ──────────────────────────
 asrRoutes.post("/transcribe", async (c) => {
   const body = await c.req.parseBody();
@@ -792,6 +1128,10 @@ asrRoutes.post("/transcribe", async (c) => {
   if (!file || typeof file === "string") {
     return c.json({ ok: false, error: "Missing file" }, 400);
   }
+  const uploadFile = file as File;
+  console.log(
+    `[ASR] upload_transcribe_start name=${uploadFile.name || "unknown"} size=${uploadFile.size || 0}`,
+  );
 
   const language = String(body.language ?? "auto");
   const apiKeysStr = String(body.apiKeys ?? "{}");
@@ -805,63 +1145,31 @@ asrRoutes.post("/transcribe", async (c) => {
 
   try {
     // Save uploaded file
-    const ext = extname((file as File).name || ".mp4");
+    const ext = extname(uploadFile.name || ".mp4");
     const inputPath = join(workDir, `input${ext}`);
-    await Bun.write(inputPath, file as Blob);
+    await Bun.write(inputPath, uploadFile as Blob);
+    const result = await transcribePreparedInput(
+      inputPath,
+      workDir,
+      language,
+      apiKeys,
+      providerOrder,
+      "upload",
+    );
 
-    // Extract audio
-    const audioPath = join(workDir, "audio.wav");
-    await extractAudio(inputPath, audioPath);
-
-    // Split if long
-    const chunks = await splitAudio(audioPath, config.maxChunkSec, workDir);
-
-	    // Transcribe each chunk using provider
-	    const allSegments: Segment[] = [];
-	    let timeOffset = 0;
-	    let usedProvider = "";
-	    let detectedLanguage = language;
-	    let completion: "final" | "partial_complete" = "final";
-
-    for (const chunk of chunks) {
-      const options = { language, format: "wav", apiKeys };
-      const result = await transcribeWithFallback(chunk, options, providerOrder);
-
-      if (!result.ok) {
-        return c.json({ ok: false, error: result.error, provider: result.provider }, 500);
-      }
-
-      usedProvider = result.provider;
-	      if (result.language && result.language !== "auto") {
-	        detectedLanguage = result.language;
-	      }
-	      if (result.completion === "partial_complete") {
-	        completion = "partial_complete";
-	      }
-
-      for (const seg of result.segments) {
-        allSegments.push({
-          start: seg.start + timeOffset,
-          end: seg.end + timeOffset,
-          text: seg.text,
-        });
-      }
-      if (chunks.length > 1) {
-        timeOffset += config.maxChunkSec;
-      }
-    }
-
-	    return c.json({
-	      ok: true,
-	      language: detectedLanguage,
-	      provider: usedProvider,
-	      completion,
-	      full_text: allSegments.map((s) => s.text).join(" "),
-	      segments: allSegments,
-	    });
+    return c.json({
+      ok: true,
+      language: result.language,
+      provider: result.provider,
+      completion: result.completion,
+      full_text: result.segments.map((s) => s.text).join(" "),
+      segments: result.segments,
+    });
   } catch (err: any) {
     console.error("Transcribe error:", err);
-    return c.json({ ok: false, error: err.message }, 500);
+    const msg = err?.message || "transcribe failed";
+    const status = msg.includes("检测到媒体不完整") ? 400 : 500;
+    return c.json({ ok: false, error: msg }, status);
   } finally {
     await cleanupDir(workDir);
   }
@@ -1073,8 +1381,14 @@ asrRoutes.post("/transcribe-url", async (c) => {
       }
     }
 
+    const audioDuration = await getAudioDuration(audioPath).catch(() => NaN);
+    if (Number.isFinite(audioDuration)) {
+      console.log(`[ASR] url_audio_ready duration_sec=${audioDuration.toFixed(1)}`);
+    }
+
     // Split if long
     const chunks = await splitAudio(audioPath, config.maxChunkSec, workDir);
+    console.log(`[ASR] url_audio_chunks count=${chunks.length} chunkSec=${config.maxChunkSec}`);
 
     const allSegments: Segment[] = [];
     let timeOffset = 0;
@@ -1106,7 +1420,12 @@ asrRoutes.post("/transcribe-url", async (c) => {
           text: seg.text,
         });
       }
-      if (chunks.length > 1) timeOffset += config.maxChunkSec;
+      const chunkDuration = await getAudioDuration(chunk).catch(() => NaN);
+      if (Number.isFinite(chunkDuration)) {
+        timeOffset += chunkDuration;
+      } else {
+        timeOffset += config.maxChunkSec;
+      }
     }
 
     return c.json({

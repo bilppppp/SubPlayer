@@ -218,6 +218,18 @@ function toTranslatedTexts(segments: Segment[]): string[] {
   return segments.map((s) => s.translation || "");
 }
 
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
 function composeAlignedSegments(raw: Segment[], translations: string[]): Segment[] {
   return raw.map((s, i) => ({
     start: s.start,
@@ -747,7 +759,7 @@ export default function AppPage() {
           setTask({
             phase: "uploading",
             progress: 0,
-            message: "正在上传文件...",
+            message: `正在上传 ${input.file.name}（${formatFileSize(input.file.size)}），系统会自动提取音频并识别...`,
           });
           const result = await transcribeFile(
             input.file,
@@ -1005,29 +1017,49 @@ export default function AppPage() {
 
             // Translate in small client-side chunks to avoid Next.js proxy
             // 30 s timeout. Each chunk finishes in ~10-15 s.
-            const CHUNK = 10;
+            const CHUNK = input.type === "file" ? 5 : 10;
+            const translateTimeoutMs = input.type === "file" ? 600_000 : 120_000;
             const merged = [...newSegments];
             let translated = merged.filter((s) => !!s.translation).length;
             const startAt = Math.max(
               0,
               Math.min(Math.max(resumeTranslateIndex, liveTranslatedUntil), newSegments.length),
             );
+            const translateSignal = nextSignal();
 
             for (let i = startAt; i < newSegments.length; i += CHUNK) {
               await waitIfPaused();
               const chunk = newSegments.slice(i, i + CHUNK);
+              const chunkEnd = Math.min(i + CHUNK, newSegments.length);
+              const baseProgress = Math.round((i / newSegments.length) * 100);
               setTask({
                 phase: "translating",
-                progress: Math.round((i / newSegments.length) * 100),
-                message: `翻译中 ${Math.min(i + CHUNK, newSegments.length)}/${newSegments.length}...`,
+                progress: baseProgress,
+                message: `翻译中 ${chunkEnd}/${newSegments.length}...`,
               });
+
+              const chunkStartMs = Date.now();
+              let chunkTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+                const elapsedSec = Math.floor((Date.now() - chunkStartMs) / 1000);
+                setTask({
+                  phase: "translating",
+                  progress: baseProgress,
+                  message: `翻译中 ${chunkEnd}/${newSegments.length}（当前批已等待 ${elapsedSec}s）`,
+                });
+              }, 1000);
 
               const transResult = await translateSegments(
                 chunk,
                 sourceLang,
                 target,
-                nextSignal(),
-              );
+                translateSignal,
+                translateTimeoutMs,
+              ).finally(() => {
+                if (chunkTimer) {
+                  clearInterval(chunkTimer);
+                  chunkTimer = null;
+                }
+              });
 
               if (transResult.ok && transResult.segments.length > 0) {
                 for (let j = 0; j < transResult.segments.length; j++) {
@@ -1051,6 +1083,18 @@ export default function AppPage() {
                     updatedAt: Date.now(),
                   });
                 }
+              } else {
+                // Keep pipeline moving on transient translation failures:
+                // fallback to source text for this chunk instead of stopping at mid-video.
+                for (let j = 0; j < chunk.length; j += 1) {
+                  const src = chunk[j];
+                  merged[i + j] = { ...src, translation: src.text };
+                }
+                translated += chunk.length;
+                setTracksFromAligned([...merged]);
+                console.warn(
+                  `[Translate] chunk fallback to source text: ${chunkEnd}/${newSegments.length}, reason=${transResult.error || "unknown"}`,
+                );
               }
             }
 
@@ -1059,6 +1103,13 @@ export default function AppPage() {
             );
             }
           } catch (translationErr) {
+            const msg =
+              translationErr instanceof Error
+                ? translationErr.message
+                : String(translationErr ?? "");
+            if (/abort/i.test(msg)) {
+              throw translationErr;
+            }
             // Translation failed but transcription succeeded — still show subtitles
             console.warn("Translation failed:", translationErr);
           }

@@ -66,6 +66,15 @@ app.use("/api/*", async (c, next) => {
   }
 
   // Per-IP fixed-window rate limiting.
+  // Chunked local uploads can issue hundreds of small requests quickly.
+  // Skip fixed-window rate limiting for dedicated upload transport routes.
+  if (
+    c.req.path.startsWith("/api/asr/upload") ||
+    c.req.path === "/api/asr/transcribe-upload"
+  ) {
+    return next();
+  }
+
   const ip = getClientIp(c);
   const now = Date.now();
   const windowMs = Math.max(1000, config.rateLimitWindowMs);
@@ -115,8 +124,10 @@ if (config.gatewayApiKeyRequired && !config.gatewayApiKey) {
 }
 export default {
   port: config.port,
-  // HLS/MP4 proxy requests can stay open for a while when CDN/network jitters.
-  // Bun default idle timeout (10s) is too aggressive and may reset sockets.
-  idleTimeout: 120,
+  // Support long-running ASR uploads/transcribe jobs and long-lived media proxy.
+  // Bun currently requires idleTimeout <= 255 seconds.
+  idleTimeout: 255,
+  // Allow very large local file uploads (e.g. multi-hour videos).
+  maxRequestBodySize: 12 * 1024 * 1024 * 1024,
   fetch: app.fetch,
 };

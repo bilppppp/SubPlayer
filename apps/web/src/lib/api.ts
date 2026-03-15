@@ -10,6 +10,8 @@ import type {
 } from "@/types";
 
 const API_BASE = "/api";
+const CHUNKED_UPLOAD_THRESHOLD_BYTES = 128 * 1024 * 1024;
+const DEFAULT_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 
 type LiveAsrMessage = {
   type?: "partial" | "done" | "error" | string;
@@ -72,6 +74,147 @@ function mergeApiKeys(override?: Record<string, unknown>) {
   return { ...getApiKeys(), ...(override || {}) };
 }
 
+function resolveDirectGatewayBase(): string {
+  if (typeof window === "undefined") return "http://localhost:8080";
+  const envGateway = (process.env.NEXT_PUBLIC_GATEWAY_URL || "").trim();
+  if (envGateway) return envGateway;
+  const host = window.location.hostname || "localhost";
+  return `http://${host}:8080`;
+}
+
+function resolveLocalFileAsrEndpoint(fileSize: number): string {
+  // Next.js dev/prod proxy has practical large-body limits for multi-GB uploads.
+  // For very large local files, upload directly to gateway to avoid proxy truncation.
+  const fourGb = 4 * 1024 * 1024 * 1024;
+  if (fileSize >= fourGb) {
+    return `${resolveDirectGatewayBase()}/api/asr/transcribe`;
+  }
+  return `${API_BASE}/asr/transcribe`;
+}
+
+function makeGatewayHeaders(opts?: { json?: boolean; binary?: boolean }): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (opts?.json) headers["Content-Type"] = "application/json";
+  if (opts?.binary) headers["Content-Type"] = "application/octet-stream";
+  const gatewayApiKey = getGatewayApiKey();
+  if (gatewayApiKey) headers["x-api-key"] = gatewayApiKey;
+  return headers;
+}
+
+async function parseJsonOrThrow<T>(res: Response, fallback = "Invalid response from server"): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(text || fallback);
+  }
+}
+
+async function transcribeFileChunked(
+  file: File,
+  language: string,
+  model: string,
+  onProgress?: (pct: number) => void,
+  signal?: AbortSignal,
+): Promise<TranscribeResult> {
+  const gatewayBase = resolveDirectGatewayBase();
+  let uploadId = "";
+  let uploadCompleted = false;
+  try {
+    const initRes = await fetch(`${gatewayBase}/api/asr/upload/init`, {
+      method: "POST",
+      headers: makeGatewayHeaders({ json: true }),
+      body: JSON.stringify({
+        fileName: file.name,
+        fileSize: file.size,
+        chunkSize: DEFAULT_UPLOAD_CHUNK_BYTES,
+      }),
+      signal,
+    });
+    if (!initRes.ok) {
+      const text = await initRes.text().catch(() => "");
+      throw new Error(`上传初始化失败：${initRes.status} ${text}`);
+    }
+    const initData = await parseJsonOrThrow<{
+      ok: boolean;
+      uploadId: string;
+      chunkSize: number;
+      totalChunks: number;
+      error?: string;
+    }>(initRes, "上传初始化返回异常");
+    if (!initData.ok || !initData.uploadId) {
+      throw new Error(initData.error || "上传初始化失败");
+    }
+
+    uploadId = initData.uploadId;
+    const chunkSize = Math.max(1, Number(initData.chunkSize || DEFAULT_UPLOAD_CHUNK_BYTES));
+    const totalChunks = Math.max(1, Number(initData.totalChunks || Math.ceil(file.size / chunkSize)));
+
+    for (let index = 0; index < totalChunks; index += 1) {
+      if (signal?.aborted) throw new Error("Request aborted");
+      const start = index * chunkSize;
+      const end = Math.min(file.size, start + chunkSize);
+      const chunkBuffer = await file.slice(start, end).arrayBuffer();
+
+      const chunkRes = await fetch(`${gatewayBase}/api/asr/upload/${uploadId}/chunk?index=${index}`, {
+        method: "PUT",
+        headers: makeGatewayHeaders({ binary: true }),
+        body: chunkBuffer,
+        signal,
+      });
+      if (!chunkRes.ok) {
+        const text = await chunkRes.text().catch(() => "");
+        throw new Error(`分片上传失败（${index + 1}/${totalChunks}）：${chunkRes.status} ${text}`);
+      }
+      if (onProgress) {
+        onProgress(Math.round(((index + 1) / totalChunks) * 100));
+      }
+    }
+
+    const completeRes = await fetch(`${gatewayBase}/api/asr/upload/${uploadId}/complete`, {
+      method: "POST",
+      headers: makeGatewayHeaders({ json: true }),
+      body: "{}",
+      signal,
+    });
+    if (!completeRes.ok) {
+      const text = await completeRes.text().catch(() => "");
+      throw new Error(`上传完成确认失败：${completeRes.status} ${text}`);
+    }
+    const completeData = await parseJsonOrThrow<{ ok: boolean; error?: string }>(
+      completeRes,
+      "上传完成确认返回异常",
+    );
+    if (!completeData.ok) throw new Error(completeData.error || "上传完成确认失败");
+    uploadCompleted = true;
+
+    const transcribeRes = await fetch(`${gatewayBase}/api/asr/transcribe-upload`, {
+      method: "POST",
+      headers: makeGatewayHeaders({ json: true }),
+      body: JSON.stringify({
+        uploadId,
+        language,
+        model,
+        apiKeys: getApiKeys(),
+      }),
+      signal,
+    });
+
+    if (!transcribeRes.ok) {
+      const text = await transcribeRes.text().catch(() => "");
+      throw new Error(`Server error: ${transcribeRes.status} ${text}`);
+    }
+    return parseJsonOrThrow<TranscribeResult>(transcribeRes);
+  } finally {
+    if (uploadId && !uploadCompleted) {
+      fetch(`${gatewayBase}/api/asr/upload/${uploadId}`, {
+        method: "DELETE",
+        headers: makeGatewayHeaders({ json: true }),
+      }).catch(() => {});
+    }
+  }
+}
+
 // ── ASR ─────────────────────────────────────────────────────────────
 
 export async function transcribeFile(
@@ -81,6 +224,10 @@ export async function transcribeFile(
   onProgress?: (pct: number) => void,
   signal?: AbortSignal,
 ): Promise<TranscribeResult> {
+  if (file.size >= CHUNKED_UPLOAD_THRESHOLD_BYTES) {
+    return transcribeFileChunked(file, language, model, onProgress, signal);
+  }
+
   const form = new FormData();
   form.append("file", file);
   form.append("language", language);
@@ -89,7 +236,8 @@ export async function transcribeFile(
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/asr/transcribe`);
+    const endpoint = resolveLocalFileAsrEndpoint(file.size);
+    xhr.open("POST", endpoint);
     const gatewayApiKey = getGatewayApiKey();
     if (gatewayApiKey) {
       xhr.setRequestHeader("x-api-key", gatewayApiKey);
@@ -116,13 +264,18 @@ export async function transcribeFile(
         resolve(data);
       } catch {
         if (signal) signal.removeEventListener("abort", onAbort);
+        const raw = String(xhr.responseText || "");
+        if (raw.includes("Request body exceeded")) {
+          reject(new Error("上传失败：文件体积超出代理限制。请确认网关服务已启动后重试。"));
+          return;
+        }
         reject(new Error("Invalid response from server"));
       }
     });
 
     xhr.addEventListener("error", () => {
       if (signal) signal.removeEventListener("abort", onAbort);
-      reject(new Error("Network error"));
+      reject(new Error(`上传失败：无法连接网关服务（${endpoint}）`));
     });
     xhr.addEventListener("abort", () => {
       if (signal) signal.removeEventListener("abort", onAbort);
@@ -294,10 +447,14 @@ export async function translateSegments(
   sourceLang = "en",
   targetLang = "zh",
   signal?: AbortSignal,
+  timeoutMs = 120_000,
 ): Promise<TranslateResult> {
-  // Translation can take a while for many segments — use 120s timeout
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, Math.max(10_000, timeoutMs));
   const onAbort = () => controller.abort();
   if (signal) {
     if (signal.aborted) controller.abort();
@@ -305,30 +462,57 @@ export async function translateSegments(
   }
 
   try {
-    const res = await fetch(`${API_BASE}/translate/batch`, {
-      method: "POST",
-      headers: makeHeaders({ json: true }),
-      signal: controller.signal,
-      body: JSON.stringify({
-        segments,
-        source_lang: sourceLang,
-        target_lang: targetLang,
-        batch_size: 15,
-        apiKeys: getApiKeys(),
-      }),
-    });
+    let lastErr = "";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const res = await fetch(`${API_BASE}/translate/batch`, {
+          method: "POST",
+          headers: makeHeaders({ json: true }),
+          signal: controller.signal,
+          body: JSON.stringify({
+            segments,
+            source_lang: sourceLang,
+            target_lang: targetLang,
+            batch_size: 15,
+            apiKeys: getApiKeys(),
+          }),
+        });
 
-    if (!res.ok) {
-      // Translation failure is non-fatal — return original segments without translations
-      console.warn(`Translation failed: ${res.status}`);
-      return {
-        ok: false,
-        segments,
-        error: `翻译失败 (${res.status})`,
-      } as TranslateResult;
+        if (!res.ok) {
+          // Translation failure is non-fatal — return original segments without translations
+          console.warn(`Translation failed: ${res.status}`);
+          return {
+            ok: false,
+            segments,
+            error: `翻译失败 (${res.status})`,
+          } as TranslateResult;
+        }
+
+        return res.json();
+      } catch (err: any) {
+        if (timedOut && err?.name === "AbortError") {
+          return {
+            ok: false,
+            segments,
+            error: "翻译请求超时（本批）",
+          } as TranslateResult;
+        }
+        if (controller.signal.aborted || err?.name === "AbortError") {
+          throw err;
+        }
+        lastErr = err?.message || String(err);
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, (attempt + 1) * 1000));
+          continue;
+        }
+      }
     }
 
-    return res.json();
+    return {
+      ok: false,
+      segments,
+      error: `翻译请求失败：${lastErr || "unknown"}`,
+    } as TranslateResult;
   } finally {
     if (signal) signal.removeEventListener("abort", onAbort);
     clearTimeout(timeout);

@@ -10,6 +10,7 @@
 dev:
 	@echo "🚀 Starting all services in parallel..."
 	@npx concurrently \
+		--kill-others-on-fail \
 		--names "ASR,GW,WEB" \
 		--prefix-colors "magenta,cyan,green" \
 		"make dev-asr" \
